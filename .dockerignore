@@ -3,6 +3,6 @@ target
 .gitignore
 .env
 *.log
-prd
+docs
 README.md
 tests
