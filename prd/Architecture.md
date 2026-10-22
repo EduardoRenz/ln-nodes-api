@@ -23,10 +23,10 @@ The service uses:
 - A pure `domain` core with no I/O.
 - An `application` layer with two ports and two use cases.
 - Framework-isolated `adapters` for HTTP, PostgreSQL, and the external API.
-- `main.rs` and `factory.rs` as the composition root.
+- `main.rs` and `composition.rs` as the composition root.
 - Native async traits with generics, without `async-trait`.
 - Explicit SQL with `sqlx`, without an ORM.
-- A composition-root factory for production and test adapters.
+- A repository factory that creates production and test implementations.
 - Process-scoped singletons shared through `Arc`.
 - A single binary plus PostgreSQL, orchestrated by Docker Compose.
 
@@ -85,8 +85,8 @@ Non-goals:
 6. **Errors are values.** `Result` and enums replace panics and sentinels.
 7. **Composition is explicit.** The composition root constructs and injects
    concrete adapters.
-8. **Creational patterns stay at the composition root.** Factories do not leak
-   into the core.
+8. **Factories create implementations, they do not implement them.** A
+   factory returns a port implementation and never implements the port itself.
 9. **Singleton means process scope, not global access.** Instances are created
    once and shared explicitly.
 10. **Names reflect responsibility.** Repositories persist and query; gateways
@@ -97,7 +97,7 @@ Non-goals:
 ## 4. System Shape
 
 ```text
-main.rs / factory.rs
+main.rs / composition.rs
         │ wires concrete adapters
         ▼
 adapters (HTTP, PostgreSQL, mempool.space)
@@ -126,9 +126,9 @@ requests.
 | `domain` | Value objects, invariants, formatting, domain errors | `std`, `chrono`, `thiserror` |
 | `application` | Ports, use cases, application errors | `domain`, `repositories::nodes_repository` |
 | `repositories` | Persistence interface, PostgreSQL implementation, test double | `domain`, `sqlx` (implementation only) |
-| `infrastructure` | Shared PostgreSQL pool, connection retry, migrations | `sqlx` |
+| `infrastructure` | Process-scoped PostgreSQL manager: pool, connection retry, migrations | `sqlx` |
 | `adapters` | HTTP and mempool integration | `domain`, `application`, frameworks |
-| `factory` / `main` | Adapter construction, configuration, wiring, lifecycle | all layers |
+| `composition` / `main` | Wiring, configuration, lifecycle, factory selection | all layers |
 
 Forbidden dependencies:
 
@@ -139,7 +139,7 @@ Forbidden dependencies:
 - `application` must not know concrete adapter types.
 - Adapters must not call each other directly.
 
-Only `main.rs` and `factory.rs` know every concrete type. The `repositories`
+Only `main.rs` and `composition.rs` know every concrete type. The `repositories`
 folder is packaged by feature: `nodes_repository.rs` is the abstract port, while
 `postgres_nodes_repository.rs` and `mock_nodes_repository.rs` are
 implementations. The dependency rule still holds because `application` imports
@@ -183,7 +183,8 @@ Terminology:
 - **Gateway** — external service integration (`NodeGateway`,
   `MempoolNodeGateway`).
 - **Adapter** — a concrete implementation of a port.
-- **Factory** — a composition-root interface that constructs adapters.
+- **Factory** — creates and returns a port implementation. It never implements
+  the port itself.
 - **Singleton** — a process-scoped instance shared through `Arc`.
 
 The factory is not an application port.
@@ -199,11 +200,12 @@ src/repositories/
 ├── mod.rs
 ├── nodes_repository.rs          # NodesRepository + RepositoryError
 ├── postgres_nodes_repository.rs # PostgresNodesRepository
+├── nodes_repository_factory.rs  # NodesRepositoryFactory + PostgresNodesRepositoryFactory
 └── mock_nodes_repository.rs     # MockNodesRepository (test builds only)
 
 src/infrastructure/
 ├── mod.rs
-└── postgres.rs     # shared pool, connection retry, migrations
+└── postgres.rs     # Postgres manager: pool, connection retry, migrations
 ```
 
 Method surface:
@@ -235,9 +237,36 @@ transactions, and row mapping for the `nodes` table. `MockNodesRepository` is an
 in-memory test double compiled only in test builds; it is never selected by the
 production factory.
 
-Shared PostgreSQL infrastructure — pool creation, connection retry, and
-migrations — lives in `src/infrastructure/postgres.rs`, so it is reused by any
-number of PostgreSQL repositories instead of being duplicated per repository.
+### Repository Factory
+
+`NodesRepositoryFactory` creates and returns a `NodesRepository` implementation.
+It never implements the repository behavior itself, and it is never a global
+accessor:
+
+```rust
+pub trait NodesRepositoryFactory: Send + Sync {
+    type Repository: NodesRepository + 'static;
+
+    fn create(
+        &self,
+        config: &Config,
+    ) -> impl Future<Output = Result<Self::Repository, RepositoryFactoryError>> + Send;
+}
+```
+
+- `PostgresNodesRepositoryFactory` is the production implementation. It
+  connects to PostgreSQL, applies migrations, and returns the repository.
+- `MockNodesRepositoryFactory` is a commented placeholder for a future fully
+  mocked environment. It would require compiling the mock outside test builds
+  and selecting the factory at runtime.
+- A factory is created and used once, in the composition root. There is no
+  `get_instance()` and no global registry.
+
+Shared PostgreSQL infrastructure — the connection manager, pool, connection
+retry, and migrations — lives in `src/infrastructure/postgres.rs` as the
+process-scoped `Postgres` manager. It is created only by the factory that
+selects PostgreSQL, and it is reused by any number of PostgreSQL repositories
+instead of being duplicated per repository.
 
 The `repositories` folder is organized by feature rather than by layer. The
 interface file is framework-free; the concrete files depend on the interface and
@@ -300,21 +329,28 @@ Endpoint examples and status codes are in `README.md`.
 
 ## 8. Composition Root
 
-`AdapterFactory` selects the concrete gateway and repository:
+The composition root selects the concrete implementations and injects them:
 
-- `ProductionFactory` builds `MempoolNodeGateway` and
-  `PostgresNodesRepository`, connects to PostgreSQL, and runs migrations.
-- A test factory can return `MockNodesRepository`, which is compiled only in
-  test builds.
+```text
+main
+ ├─ MempoolNodeGateway::new(&config)          → gateway
+ ├─ PostgresNodesRepositoryFactory.create()   → repository
+ └─ build_app(gateway, repository, interval)   → App
+```
 
-The factory uses associated types, preserving static dispatch and avoiding
-`Box<dyn Trait>` and `async-trait`.
+- `build_app` receives already constructed dependencies, so it holds no
+  infrastructure knowledge.
+- The repository factory uses associated types, preserving static dispatch and
+  avoiding `Box<dyn Trait>` and `async-trait`.
+- Migrations are a database lifecycle operation, not a repository behavior, so
+  the `migrate` command calls `composition::run_migrations` instead of the
+  factory.
 
 `build_app` constructs the graph once:
 
 - One gateway adapter.
 - One repository adapter.
-- One database pool.
+- One PostgreSQL manager holding the pool.
 - One router.
 - One import interval.
 
@@ -328,7 +364,10 @@ Rules:
 - No `lazy_static` or `once_cell`; `OnceLock` is only for rare process-wide
   infrastructure, not adapters.
 - Tests create isolated instances; they never share production singletons.
-- No runtime mock mode selected by an environment variable.
+- No runtime mock mode selected by an environment variable yet. When it is
+  added, the mock repository must be compiled outside test builds and the
+  composition root must select the factory at runtime, for example through an
+  enum wrapper that implements `NodesRepository`.
 
 ---
 
@@ -423,7 +462,7 @@ Concurrency:
 Frameworks stay at the infrastructure boundary:
 
 - `axum` — HTTP adapter only.
-- `sqlx` — PostgreSQL repository only.
+- `sqlx` — PostgreSQL repository, factory, and infrastructure only.
 - `reqwest` — mempool gateway only.
 - `serde` — boundary DTOs only.
 - `tokio`, `chrono`, `tracing`, `thiserror` — runtime, time, logs, and errors.
@@ -475,7 +514,7 @@ Test commands are in `README.md`.
 | Full snapshot replacement | Simple and mirrors the ranking; a small valid response can shrink the dataset. | Upsert plus prune by batch ID. |
 | PostgreSQL | Extra service; closer to production. | SQLite is simpler locally but less realistic. |
 | Native async traits + generics | Verbose signatures; no trait objects. | `async-trait` + `Arc<dyn Trait>`. |
-| Factory trait | Adds generic parameters; centralizes real/test construction. | Direct construction or an enum factory. |
+| Repository factory | Adds a trait and generic parameters; centralizes construction and keeps the composition root explicit. | Direct construction in `main`. |
 | Process-scoped singleton | Explicit ownership; no global access point. | `static OnceLock`, easier global access but harder tests. |
 | Single crate | Weaker compile-time layer enforcement. | A workspace. |
 | In-process scheduler | Simple deployment; one replica only. | A dedicated worker. |
@@ -490,7 +529,7 @@ Test commands are in `README.md`.
 - No trait for clock, logger, or configuration.
 - No generic CRUD repository.
 - No workspace, DI container, domain events, CQRS, or message bus.
-- One factory trait; no service locator.
+- One repository factory trait; no service locator and no global accessor.
 - No global mutable adapter singleton.
 - No `Arc<Mutex<_>>`; use immutable sharing or channels.
 - No mockall, wiremock, or testcontainers.
@@ -509,14 +548,14 @@ Test commands are in `README.md`.
 - Failures preserve the previous snapshot.
 - The request path never depends on the external API.
 - Formatting is exact and unit-tested.
-- Real and test adapters are constructed through one factory.
+- Real and test repositories are constructed through one factory.
 - Instances are shared explicitly, without global mutable state.
 
 ### Negative
 
 - Native async trait signatures are verbose.
 - The factory adds generic parameters.
-- Mock adapters are selected by the test factory, not a runtime toggle.
+- Mock repositories are selected by the test factory, not a runtime toggle.
 - Runtime SQL trades compile-time validation for simpler builds.
 - Full snapshot replacement is coarse.
 - PostgreSQL and Docker add setup compared with SQLite.
@@ -526,7 +565,7 @@ Test commands are in `README.md`.
 ### Revisit triggers
 
 - **Multiple replicas:** add an advisory lock or a worker.
-- **Runtime adapter selection:** use an enum factory or `async-trait` + `dyn`.
+- **Runtime repository selection:** add an enum wrapper implementing `NodesRepository`.
 - **Large dataset:** add pagination and indexes for query patterns.
 - **Compile-time SQL safety:** adopt `sqlx::query!` with offline metadata.
 - **Browser clients:** add explicit CORS.
@@ -544,5 +583,5 @@ Test commands are in `README.md`.
 - `src/application/` — ports and use cases.
 - `src/adapters/` — HTTP and mempool adapters.
 - `src/repositories/` — repository interface and implementations.
-- `src/infrastructure/` — shared PostgreSQL pool and migrations.
-- `src/factory.rs` — composition root and adapter factory.
+- `src/infrastructure/` — process-scoped PostgreSQL manager.
+- `src/composition.rs` — composition root wiring.

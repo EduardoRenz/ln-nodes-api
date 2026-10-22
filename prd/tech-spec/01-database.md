@@ -316,5 +316,6 @@ docker compose down -v
 - `migrations/0001_create_nodes.sql` — schema source of truth.
 - `src/repositories/nodes_repository.rs` — `NodesRepository` interface.
 - `src/repositories/postgres_nodes_repository.rs` — `PostgresNodesRepository` implementation.
+- `src/repositories/nodes_repository_factory.rs` — factory that creates the PostgreSQL repository.
 - `src/repositories/mock_nodes_repository.rs` — in-memory test double.
-- `src/infrastructure/postgres.rs` — shared pool, connection retry, and migrations.
+- `src/infrastructure/postgres.rs` — process-scoped PostgreSQL manager: pool, connection retry, and migrations.

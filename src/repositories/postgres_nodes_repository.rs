@@ -1,23 +1,29 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
-use sqlx::{FromRow, PgPool};
+use sqlx::FromRow;
 
 use crate::domain::{FirstSeen, Node, PublicKey, Sats};
+use crate::infrastructure::postgres::Postgres;
 use crate::repositories::nodes_repository::{NodesRepository, RepositoryError};
 
 /// PostgreSQL implementation of the `NodesRepository` interface.
+///
+/// The repository never creates a connection: it receives the process-scoped
+/// PostgreSQL manager built by the factory.
 pub struct PostgresNodesRepository {
-    pool: PgPool,
+    database: Arc<Postgres>,
 }
 
 impl PostgresNodesRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub(crate) fn new(database: Arc<Postgres>) -> Self {
+        Self { database }
     }
 }
 
 impl NodesRepository for PostgresNodesRepository {
     async fn save_snapshot(&self, nodes: &[Node]) -> Result<(), RepositoryError> {
-        let mut transaction = self.pool.begin().await.map_err(db_error)?;
+        let mut transaction = self.database.pool().begin().await.map_err(db_error)?;
 
         sqlx::query("DELETE FROM nodes")
             .execute(&mut *transaction)
@@ -51,7 +57,7 @@ impl NodesRepository for PostgresNodesRepository {
             "SELECT public_key, alias, capacity_sats, first_seen, rank_position \
              FROM nodes ORDER BY rank_position ASC",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(self.database.pool())
         .await
         .map_err(db_error)?;
 
@@ -60,7 +66,7 @@ impl NodesRepository for PostgresNodesRepository {
 
     async fn ping(&self) -> Result<(), RepositoryError> {
         sqlx::query("SELECT 1")
-            .execute(&self.pool)
+            .execute(self.database.pool())
             .await
             .map(|_| ())
             .map_err(db_error)
