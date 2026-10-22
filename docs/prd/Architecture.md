@@ -4,9 +4,9 @@
 - **Date:** 2026-10-21
 - **Context:** Bipa Back-end Coding Challenge
 - **Related documents:**
-  - `README.md` — setup, environment variables, API examples, and run commands.
-  - `prd/tech-spec/01-database.md` — schema, migrations, persistence, and database operations.
-  - `prd/Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
+  - `../../README.md` — setup, environment variables, API examples, and run commands.
+  - `tech-spec/01-database.md` — schema, migrations, persistence, and database operations.
+  - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 
 This document records architectural decisions only. Operational instructions belong in the README and database reference.
 
@@ -313,7 +313,7 @@ The parser is pure and tested with JSON fixtures.
 - Reports database health with `SELECT 1`.
 
 Schema, column types, migrations, transaction behavior, pool settings, and
-operational queries are documented in `prd/tech-spec/01-database.md`.
+operational queries are documented in `tech-spec/01-database.md`.
 
 ### HTTP adapter
 
@@ -323,7 +323,7 @@ operational queries are documented in `prd/tech-spec/01-database.md`.
 - Uses a small `axum` middleware for request logging.
 - Leaves CORS, authentication, pagination, caching, and OpenAPI out of scope.
 
-Endpoint examples and status codes are in `README.md`.
+Endpoint examples and status codes are in `../../README.md`.
 
 ---
 
@@ -394,7 +394,7 @@ Failure semantics are fail-closed:
 The trade-off is that a valid but unexpectedly small response could shrink the
 dataset. The non-empty validation limits the risk but does not prove
 completeness. Transaction details and the schema are in
-`prd/tech-spec/01-database.md`.
+`tech-spec/01-database.md`.
 
 Multiple replicas would need a PostgreSQL advisory lock or a dedicated worker;
 that is out of scope for a single instance.
@@ -482,7 +482,7 @@ Deliberately excluded:
 - A DI container or service locator.
 - Any ORM — SQL is explicit and small.
 
-Key versions are in `README.md`; the full dependency list is in `Cargo.toml`.
+Key versions are in `../../README.md`; the full dependency list is in `Cargo.toml`.
 
 ---
 
@@ -503,7 +503,7 @@ Target test matrix:
 
 `MockNodesRepository` is hand-written and compiled only in test builds. There
 is no mocking framework, HTTP mock server, or testcontainer in the core tests.
-Test commands are in `README.md`.
+Test commands are in `../../README.md`.
 
 ---
 
@@ -576,9 +576,9 @@ Test commands are in `README.md`.
 
 ## 17. References
 
-- `README.md` — setup, environment variables, API examples, and commands.
-- `prd/tech-spec/01-database.md` — database reference.
-- `prd/Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
+- `../../README.md` — setup, environment variables, API examples, and commands.
+- `tech-spec/01-database.md` — database reference.
+- `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
 - `src/application/` — ports and use cases.
 - `src/adapters/` — HTTP and mempool adapters.

@@ -150,9 +150,10 @@ mempool parsing. PostgreSQL and HTTP adapter integration tests are a next step.
 
 ## Documentation
 
-- [`prd/Architecture.md`](prd/Architecture.md) — architecture and design decisions.
-- [`prd/tech-spec/01-database.md`](prd/tech-spec/01-database.md) — schema, migrations, persistence, and database operations.
-- [`prd/Back-end Coding Challenge - Superhuman Docs.md`](<prd/Back-end Coding Challenge - Superhuman Docs.md>) — challenge requirements.
+- [`docs/api.md`](docs/api.md) — HTTP API contract and examples.
+- [`docs/prd/Architecture.md`](docs/prd/Architecture.md) — architecture and design decisions.
+- [`docs/prd/tech-spec/01-database.md`](docs/prd/tech-spec/01-database.md) — schema, migrations, persistence, and database operations.
+- [`docs/prd/Back-end Coding Challenge - Superhuman Docs.md`](docs/prd/Back-end%20Coding%20Challenge%20-%20Superhuman%20Docs.md) — challenge requirements.
 
 ## Challenge README Template
 
@@ -193,7 +194,7 @@ _To be filled in by the author._
   offline metadata for compile-time validation.
 - Pagination, caching, authentication, and CORS are out of scope.
 
-See [`prd/Architecture.md`](prd/Architecture.md) for the full reasoning.
+See [`docs/prd/Architecture.md`](docs/prd/Architecture.md) for the full reasoning.
 
 ### What do you think is the weakest part of your project?
 
@@ -203,6 +204,7 @@ completeness. Adapter integration tests would be the next investment.
 
 ### Is there any other information you'd like us to know?
 
-The architecture is documented in [`prd/Architecture.md`](prd/Architecture.md),
-and the database details are in
-[`prd/tech-spec/01-database.md`](prd/tech-spec/01-database.md).
+The architecture is documented in
+[`docs/prd/Architecture.md`](docs/prd/Architecture.md), and the database details
+are in
+[`docs/prd/tech-spec/01-database.md`](docs/prd/tech-spec/01-database.md).

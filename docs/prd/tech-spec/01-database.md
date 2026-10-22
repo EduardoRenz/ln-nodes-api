@@ -3,9 +3,9 @@
 - **Status:** Accepted
 - **Scope:** PostgreSQL schema, persistence behavior, migrations, and operational queries.
 - **Related documents:**
-  - `README.md` — setup, environment variables, and run commands.
-  - `prd/Architecture.md` — layer boundaries and persistence decisions.
-  - `migrations/0001_create_nodes.sql` — schema source of truth.
+  - `../../../README.md` — setup, environment variables, and run commands.
+  - `../Architecture.md` — layer boundaries and persistence decisions.
+  - `../../../migrations/0001_create_nodes.sql` — schema source of truth.
 
 This document is the detailed reference for the database. The README only contains the minimum needed to start the service.
 
@@ -79,7 +79,7 @@ CREATE INDEX nodes_rank_position_idx
 ```
 
 The full schema is created by the migrations in
-[`migrations/`](../../migrations/).
+[`migrations/`](../../../migrations/).
 
 ---
 
@@ -119,7 +119,7 @@ CREATE INDEX nodes_rank_position_idx ON nodes (rank_position);
 
 ## 6. Migrations
 
-Migrations live in [`migrations/`](../../migrations/) and are embedded into the binary with `sqlx::migrate!`.
+Migrations live in [`migrations/`](../../../migrations/) and are embedded into the binary with `sqlx::migrate!`.
 
 The current migration set is:
 
@@ -311,9 +311,9 @@ docker compose down -v
 
 ## 13. References
 
-- `README.md` — setup and run instructions.
-- `prd/Architecture.md` — layer boundaries and persistence decisions.
-- `migrations/0001_create_nodes.sql` — schema source of truth.
+- `../../../README.md` — setup and run instructions.
+- `../Architecture.md` — layer boundaries and persistence decisions.
+- `../../../migrations/0001_create_nodes.sql` — schema source of truth.
 - `src/repositories/nodes_repository.rs` — `NodesRepository` interface.
 - `src/repositories/postgres_nodes_repository.rs` — `PostgresNodesRepository` implementation.
 - `src/repositories/nodes_repository_factory.rs` — factory that creates the PostgreSQL repository.
