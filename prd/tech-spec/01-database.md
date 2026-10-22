@@ -167,7 +167,7 @@ The project uses forward-only migrations; there are no down migrations.
 
 ## 7. Write Path
 
-`PostgresNodeRepository::save_snapshot` writes a complete snapshot in one transaction:
+`PostgresNodesRepository::save_snapshot` writes a complete snapshot in one transaction:
 
 ```text
 BEGIN
@@ -314,4 +314,7 @@ docker compose down -v
 - `README.md` — setup and run instructions.
 - `prd/Architecture.md` — layer boundaries and persistence decisions.
 - `migrations/0001_create_nodes.sql` — schema source of truth.
-- `src/adapters/postgres.rs` — repository implementation.
+- `src/repositories/nodes_repository.rs` — `NodesRepository` interface.
+- `src/repositories/postgres_nodes_repository.rs` — `PostgresNodesRepository` implementation.
+- `src/repositories/mock_nodes_repository.rs` — in-memory test double.
+- `src/infrastructure/postgres.rs` — shared pool, connection retry, and migrations.
