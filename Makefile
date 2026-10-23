@@ -6,11 +6,12 @@ DB_NAME ?= lightning
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up down ps logs bash db-shell db-migrate db-reset build test
+.PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset build test
 
 help:
 	@echo "Usage:"
-	@echo "  make up          Start the app and database"
+	@echo "  make up          Start the app and database with the existing image"
+	@echo "  make up-build    Rebuild the image, then start the stack"
 	@echo "  make down        Stop the stack"
 	@echo "  make ps          Show container status"
 	@echo "  make logs        Follow app logs"
@@ -22,6 +23,9 @@ help:
 	@echo "  make test        Run all Rust tests"
 
 up:
+	$(COMPOSE) up -d
+
+up-build:
 	$(COMPOSE) up --build -d
 
 down:

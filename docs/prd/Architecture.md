@@ -21,18 +21,23 @@ mempool.space, stores a validated snapshot in PostgreSQL, and serves it through
 The service uses:
 
 - A pure `domain` core with no I/O.
-- An `application` layer with two ports and two use cases.
-- Framework-isolated `adapters` for HTTP, PostgreSQL, and the external API.
+- An `application` layer with two use cases that depend on two ports.
+- Framework-isolated boundary modules:
+  - `http` for inbound HTTP;
+  - `gateways` for external APIs;
+  - `repositories` for persistence.
 - `main.rs` and `composition.rs` as the composition root.
 - Native async traits with generics, without `async-trait`.
 - Explicit SQL with `sqlx`, without an ORM.
-- A repository factory that creates production and test implementations.
+- A repository factory and a gateway factory for production and test
+  implementations.
 - Process-scoped singletons shared through `Arc`.
 - A single binary plus PostgreSQL, orchestrated by Docker Compose.
 
 The design is intentionally small: **two ports, two use cases, three production
-adapters, and one factory**. Clean Architecture requires dependencies to point
-inward and effects to stay at the edges, not a class per concept.
+boundary implementations, and two factories**. Clean Architecture requires
+dependencies to point inward and effects to stay at the edges, not a class per
+concept.
 
 ---
 
@@ -75,7 +80,7 @@ Non-goals:
 1. **Dependencies point inward.** `domain` knows no frameworks; `application`
    knows only `domain` and its ports.
 2. **Effects live at the edges.** HTTP, SQL, network, time, and logging are
-   adapter concerns.
+   boundary concerns.
 3. **Ports exist only at real boundaries.** The boundaries are node ingestion
    and node persistence.
 4. **Pure functions decide, imperative code executes.** Import policy is
@@ -84,7 +89,7 @@ Non-goals:
    strings and integers where invariants matter.
 6. **Errors are values.** `Result` and enums replace panics and sentinels.
 7. **Composition is explicit.** The composition root constructs and injects
-   concrete adapters.
+   concrete implementations.
 8. **Factories create implementations, they do not implement them.** A
    factory returns a port implementation and never implements the port itself.
 9. **Singleton means process scope, not global access.** Instances are created
@@ -98,11 +103,12 @@ Non-goals:
 
 ```text
 main.rs / composition.rs
-        │ wires concrete adapters
-        ▼
-adapters (HTTP, PostgreSQL, mempool.space)
-        │ implement ports
-        ▼
+        │ wires concrete implementations
+        ├── http         (inbound HTTP)
+        ├── gateways     (external APIs)
+        └── repositories (persistence)
+                     │ implement ports
+                     ▼
 application (use cases + ports)
         │ depends on
         ▼
@@ -111,8 +117,9 @@ domain (pure types, invariants, formatting)
 
 There are two paths:
 
-- **Import:** scheduler → gateway → import use case → repository → PostgreSQL.
-- **Read:** HTTP adapter → list use case → repository → PostgreSQL.
+- **Import:** scheduler → `NodesGateway` → import use case → `NodesRepository`
+  → PostgreSQL.
+- **Read:** HTTP → list use case → `NodesRepository` → PostgreSQL.
 
 The read path never calls the external API. The import path never handles HTTP
 requests.
@@ -124,26 +131,26 @@ requests.
 | Layer | Responsibility | May depend on |
 | --- | --- | --- |
 | `domain` | Value objects, invariants, formatting, domain errors | `std`, `chrono`, `thiserror` |
-| `application` | Ports, use cases, application errors | `domain`, `repositories::nodes_repository` |
+| `application` | Ports, use cases, application errors | `domain`, `gateways::nodes_gateway`, `repositories::nodes_repository` |
+| `gateways` | External API interface, mempool implementation, test double | `domain`, `reqwest` (implementation only) |
 | `repositories` | Persistence interface, PostgreSQL implementation, test double | `domain`, `sqlx` (implementation only) |
+| `http` | Inbound HTTP handlers and DTOs | `domain`, `application`, `axum` |
 | `infrastructure` | Process-scoped PostgreSQL manager: pool, connection retry, migrations | `sqlx` |
-| `adapters` | HTTP and mempool integration | `domain`, `application`, frameworks |
 | `composition` / `main` | Wiring, configuration, lifecycle, factory selection | all layers |
 
 Forbidden dependencies:
 
 - `domain` must not import `axum`, `sqlx`, `reqwest`, or `serde`.
 - `application` must not import `axum`, `sqlx`, `reqwest`, or `serde`.
-- `application` must not import any concrete repository module.
+- `application` must not import any concrete gateway or repository module.
 - `domain` must not perform I/O, read environment variables, or log.
-- `application` must not know concrete adapter types.
-- Adapters must not call each other directly.
+- `application` must not know concrete implementation types.
+- Boundary modules must not call each other directly.
 
-Only `main.rs` and `composition.rs` know every concrete type. The `repositories`
-folder is packaged by feature: `nodes_repository.rs` is the abstract port, while
-`postgres_nodes_repository.rs` and `mock_nodes_repository.rs` are
-implementations. The dependency rule still holds because `application` imports
-only `repositories::nodes_repository`.
+Only `main.rs` and `composition.rs` know every concrete type. `gateways` and
+`repositories` are packaged by feature: the interface file is the abstract port,
+while the technology-specific files are implementations. The dependency rule
+still holds because `application` imports only the port modules.
 
 ---
 
@@ -168,7 +175,7 @@ The application depends on two ports:
 
 | Port | Responsibility | Methods |
 | --- | --- | --- |
-| `NodeGateway` | External node source | `fetch` |
+| `NodesGateway` | External node source | `fetch` |
 | `NodesRepository` | Persistence and querying | `save_snapshot`, `list`, `ping` |
 
 Ports use native async traits with `impl Future + Send` and generic dispatch.
@@ -180,14 +187,14 @@ Terminology:
 
 - **Repository** — persistence and querying (`NodesRepository`,
   `PostgresNodesRepository`).
-- **Gateway** — external service integration (`NodeGateway`,
-  `MempoolNodeGateway`).
-- **Adapter** — a concrete implementation of a port.
+- **Gateway** — external service integration (`NodesGateway`,
+  `MempoolNodesGateway`).
+- **Boundary implementation** — a concrete implementation of a port.
 - **Factory** — creates and returns a port implementation. It never implements
   the port itself.
 - **Singleton** — a process-scoped instance shared through `Arc`.
 
-The factory is not an application port.
+Factories are not application ports.
 
 ### Repository Pattern and Naming
 
@@ -274,13 +281,76 @@ on their infrastructure. This is a deliberate packaging trade-off for
 discoverability. The dependency rule still holds: `application` depends on
 `repositories::nodes_repository`, not on the concrete repository modules.
 
+### Gateway Pattern and Naming
+
+The gateway pattern isolates external API access from the use cases.
+`NodesGateway` is the abstract boundary; the application imports only this
+interface and never imports `reqwest` or a concrete gateway type.
+
+```text
+src/gateways/
+├── mod.rs
+├── nodes_gateway.rs                # NodesGateway + GatewayError
+├── mempool_nodes_gateway.rs        # MempoolNodesGateway
+├── nodes_gateway_factory.rs        # NodesGatewayFactory + MempoolNodesGatewayFactory
+└── mock_nodes_gateway.rs           # MockNodesGateway (test builds only)
+```
+
+Method surface:
+
+- `fetch` — retrieve the current node ranking from the external source.
+
+Naming conventions:
+
+- The interface is named after the aggregate in the plural plus `Gateway`:
+  `NodesGateway`.
+- Concrete implementations use a source or role prefix:
+  `MempoolNodesGateway`, `MockNodesGateway`.
+- The file name mirrors the type in `snake_case`.
+- One file per gateway implementation, so several external sources can coexist
+  without collision.
+- Persistence is a `Repository`, never a `Gateway`.
+- Avoid `Client`, `Provider`, and generic `Service` names for ports.
+- Files and modules use `snake_case`; Rust types use `UpperCamelCase`.
+
+`MempoolNodesGateway` implements the mempool.space connectivity-ranking
+endpoint. `MockNodesGateway` is an in-memory test double compiled only in test
+builds; it is never selected by the production factory.
+
+### Gateway Factory
+
+`NodesGatewayFactory` creates and returns a `NodesGateway` implementation. It
+never implements the gateway behavior itself, and it is never a global accessor:
+
+```rust
+pub trait NodesGatewayFactory: Send + Sync {
+    type Gateway: NodesGateway + 'static;
+
+    fn create(&self, config: &Config) -> Result<Self::Gateway, GatewayFactoryError>;
+}
+```
+
+- `MempoolNodesGatewayFactory` is the production implementation. It builds the
+  HTTP client for `MempoolNodesGateway`.
+- `MockNodesGatewayFactory` is a commented placeholder for a future fully mocked
+  environment. It would require compiling the mock outside test builds and
+  selecting the factory at runtime.
+- Gateway creation is synchronous because it only builds the HTTP client.
+- A factory is created and used once, in the composition root. There is no
+  `get_instance()` and no global registry.
+
+The `gateways` folder is organized by feature rather than by layer. The interface
+file is framework-free; the concrete file depends on the interface and on
+`reqwest`. The dependency rule holds because `application` imports only
+`gateways::nodes_gateway`.
+
 ---
 
-## 7. Use Cases and Adapters
+## 7. Use Cases and Boundary Implementations
 
 ### Import use case
 
-1. Fetch validated nodes through `NodeGateway`.
+1. Fetch validated nodes through `NodesGateway`.
 2. Apply a pure import plan: empty input is skipped; non-empty input replaces
    the snapshot.
 3. Persist through `NodesRepository`.
@@ -289,10 +359,10 @@ discoverability. The dependency rule still holds: `application` depends on
 ### List use case
 
 Reads the snapshot through `NodesRepository` and returns domain nodes. It is
-intentionally thin: it keeps the HTTP adapter behind the application boundary
-and provides a stable error type.
+intentionally thin: it keeps the HTTP layer behind the application boundary and
+provides a stable error type.
 
-### Mempool gateway
+### MempoolNodesGateway
 
 - Performs the HTTP request with a timeout and User-Agent.
 - Deserializes the response into transport DTOs.
@@ -315,7 +385,7 @@ The parser is pure and tested with JSON fixtures.
 Schema, column types, migrations, transaction behavior, pool settings, and
 operational queries are documented in `tech-spec/01-database.md`.
 
-### HTTP adapter
+### HTTP layer
 
 - Exposes `/nodes` and `/health`.
 - Calls the application use cases; contains no domain logic.
@@ -323,7 +393,7 @@ operational queries are documented in `tech-spec/01-database.md`.
 - Uses a small `axum` middleware for request logging.
 - Leaves CORS, authentication, pagination, caching, and OpenAPI out of scope.
 
-Endpoint examples and status codes are in `../../README.md`.
+Endpoint examples and status codes are in `../api.md`.
 
 ---
 
@@ -333,23 +403,23 @@ The composition root selects the concrete implementations and injects them:
 
 ```text
 main
- ├─ MempoolNodeGateway::new(&config)          → gateway
- ├─ PostgresNodesRepositoryFactory.create()   → repository
- └─ build_app(gateway, repository, interval)   → App
+ ├─ MempoolNodesGatewayFactory.create(&config) → gateway
+ ├─ PostgresNodesRepositoryFactory.create()    → repository
+ └─ build_app(gateway, repository, interval)    → App
 ```
 
 - `build_app` receives already constructed dependencies, so it holds no
   infrastructure knowledge.
-- The repository factory uses associated types, preserving static dispatch and
-  avoiding `Box<dyn Trait>` and `async-trait`.
+- The repository and gateway factories use associated types, preserving static
+  dispatch and avoiding `Box<dyn Trait>` and `async-trait`.
 - Migrations are a database lifecycle operation, not a repository behavior, so
   the `migrate` command calls `composition::run_migrations` instead of the
   factory.
 
 `build_app` constructs the graph once:
 
-- One gateway adapter.
-- One repository adapter.
+- One gateway implementation.
+- One repository implementation.
 - One PostgreSQL manager holding the pool.
 - One router.
 - One import interval.
@@ -360,14 +430,14 @@ service locator.
 
 Rules:
 
-- No `static DB: OnceLock<PgPool>` or similar adapter singletons.
+- No `static DB: OnceLock<PgPool>` or similar boundary singletons.
 - No `lazy_static` or `once_cell`; `OnceLock` is only for rare process-wide
-  infrastructure, not adapters.
+  infrastructure, not boundary implementations.
 - Tests create isolated instances; they never share production singletons.
 - No runtime mock mode selected by an environment variable yet. When it is
-  added, the mock repository must be compiled outside test builds and the
+  added, the mock gateway/repository must be compiled outside test builds and the
   composition root must select the factory at runtime, for example through an
-  enum wrapper that implements `NodesRepository`.
+  enum wrapper that implements the corresponding port.
 
 ---
 
@@ -418,7 +488,7 @@ Error layering:
 framework error → port error → application error → HTTP error
 ```
 
-Concrete causes are logged at the adapter boundary; internal details are never
+Concrete causes are logged at the boundary; internal details are never
 returned to clients.
 
 Concurrency:
@@ -436,7 +506,7 @@ Concurrency:
 
 | Practice | Implementation |
 | --- | --- |
-| Functional core, imperative shell | Pure domain and import policy; effects in adapters. |
+| Functional core, imperative shell | Pure domain and import policy; effects in boundary modules. |
 | Algebraic data types | `Result`, `Option`, import plans/outcomes, error enums. |
 | Validated value objects | `PublicKey`, `Sats`, `FirstSeen`. |
 | Immutability | Immutable nodes; slices in functions; local `mut` only. |
@@ -444,14 +514,14 @@ Concurrency:
 | Explicit dependencies | Ports and configuration passed as arguments. |
 | Errors as values | Typed enums and `?`; no exceptions or sentinels. |
 | Total functions after validation | Formatting cannot fail once values exist. |
-| Effects at the boundary | HTTP, SQL, network, time, and logging in adapters. |
+| Effects at the boundary | HTTP, SQL, network, time, and logging in boundary modules. |
 | No global mutable state | No global singletons, lazy statics, or shared mutable caches. |
 
 | SOLID principle | Implementation |
 | --- | --- |
-| Single Responsibility | Domain formats, application decides, adapters do I/O. |
-| Open/Closed | New gateway or repository adapters do not change use cases. |
-| Liskov Substitution | Fakes and real adapters honor the same ports. |
+| Single Responsibility | Domain formats, application decides, boundary modules do I/O. |
+| Open/Closed | New gateway or repository implementations do not change use cases. |
+| Liskov Substitution | Fakes and real implementations honor the same ports. |
 | Interface Segregation | Two small ports instead of one broad service. |
 | Dependency Inversion | Application defines traits; composition root injects. |
 
@@ -461,13 +531,13 @@ Concurrency:
 
 Frameworks stay at the infrastructure boundary:
 
-- `axum` — HTTP adapter only.
+- `axum` — HTTP layer only.
 - `sqlx` — PostgreSQL repository, factory, and infrastructure only.
 - `reqwest` — mempool gateway only.
 - `serde` — boundary DTOs only.
 - `tokio`, `chrono`, `tracing`, `thiserror` — runtime, time, logs, and errors.
 
-None appears in `domain` or `application`. Replacing an adapter does not change
+None appears in `domain` or `application`. Replacing an implementation does not change
 the core.
 
 Deliberately excluded:
@@ -496,14 +566,14 @@ Target test matrix:
 | Level | What is tested |
 | --- | --- |
 | Domain | Bitcoin and timestamp formatting, value validation |
-| Application | Import policy and use cases with `MockNodesRepository` |
-| Mempool gateway | Parsing, duplicates, missing/invalid fields |
+| Application | Import policy and use cases with `MockNodesGateway` and `MockNodesRepository` |
+| MempoolNodesGateway | Parsing, duplicates, missing/invalid fields |
 | PostgreSQL repository | Snapshot replace, ordering, rollback, health |
-| HTTP adapter | Status codes, JSON, error mapping, health |
+| HTTP layer | Status codes, JSON, error mapping, health |
 
-`MockNodesRepository` is hand-written and compiled only in test builds. There
-is no mocking framework, HTTP mock server, or testcontainer in the core tests.
-Test commands are in `../../README.md`.
+`MockNodesGateway` and `MockNodesRepository` are hand-written and compiled only
+in test builds. There is no mocking framework, HTTP mock server, or testcontainer
+in the core tests. Test commands are in `../../README.md`.
 
 ---
 
@@ -514,12 +584,12 @@ Test commands are in `../../README.md`.
 | Full snapshot replacement | Simple and mirrors the ranking; a small valid response can shrink the dataset. | Upsert plus prune by batch ID. |
 | PostgreSQL | Extra service; closer to production. | SQLite is simpler locally but less realistic. |
 | Native async traits + generics | Verbose signatures; no trait objects. | `async-trait` + `Arc<dyn Trait>`. |
-| Repository factory | Adds a trait and generic parameters; centralizes construction and keeps the composition root explicit. | Direct construction in `main`. |
+| Boundary factories | Add traits and generic parameters; centralize construction and keep the composition root explicit. | Direct construction in `main`. |
 | Process-scoped singleton | Explicit ownership; no global access point. | `static OnceLock`, easier global access but harder tests. |
 | Single crate | Weaker compile-time layer enforcement. | A workspace. |
 | In-process scheduler | Simple deployment; one replica only. | A dedicated worker. |
 | Runtime SQL | No compile-time SQL validation. | `sqlx::query!` with offline metadata. |
-| No pagination/cache/auth/CORS | Minimal scope; less flexible API. | Add at the adapter boundary when needed. |
+| No pagination/cache/auth/CORS | Minimal scope; less flexible API. | Add at the boundary layer when needed. |
 
 ---
 
@@ -529,8 +599,8 @@ Test commands are in `../../README.md`.
 - No trait for clock, logger, or configuration.
 - No generic CRUD repository.
 - No workspace, DI container, domain events, CQRS, or message bus.
-- One repository factory trait; no service locator and no global accessor.
-- No global mutable adapter singleton.
+- One factory trait per boundary; no service locator and no global accessor.
+- No global mutable boundary singleton.
 - No `Arc<Mutex<_>>`; use immutable sharing or channels.
 - No mockall, wiremock, or testcontainers.
 - No framework types in `domain` or `application`.
@@ -548,14 +618,14 @@ Test commands are in `../../README.md`.
 - Failures preserve the previous snapshot.
 - The request path never depends on the external API.
 - Formatting is exact and unit-tested.
-- Real and test repositories are constructed through one factory.
+- Real and test gateways and repositories are constructed through their factories.
 - Instances are shared explicitly, without global mutable state.
 
 ### Negative
 
 - Native async trait signatures are verbose.
-- The factory adds generic parameters.
-- Mock repositories are selected by the test factory, not a runtime toggle.
+- The factories add generic parameters.
+- Mock gateways and repositories are selected by test factories, not a runtime toggle.
 - Runtime SQL trades compile-time validation for simpler builds.
 - Full snapshot replacement is coarse.
 - PostgreSQL and Docker add setup compared with SQLite.
@@ -565,7 +635,7 @@ Test commands are in `../../README.md`.
 ### Revisit triggers
 
 - **Multiple replicas:** add an advisory lock or a worker.
-- **Runtime repository selection:** add an enum wrapper implementing `NodesRepository`.
+- **Runtime implementation selection:** add an enum wrapper implementing the relevant port.
 - **Large dataset:** add pagination and indexes for query patterns.
 - **Compile-time SQL safety:** adopt `sqlx::query!` with offline metadata.
 - **Browser clients:** add explicit CORS.
@@ -580,8 +650,9 @@ Test commands are in `../../README.md`.
 - `tech-spec/01-database.md` — database reference.
 - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
-- `src/application/` — ports and use cases.
-- `src/adapters/` — HTTP and mempool adapters.
+- `src/application/` — import and list use cases.
+- `src/http/` — inbound HTTP layer.
+- `src/gateways/` — external API gateway interface and implementations.
 - `src/repositories/` — repository interface and implementations.
 - `src/infrastructure/` — process-scoped PostgreSQL manager.
 - `src/composition.rs` — composition root wiring.

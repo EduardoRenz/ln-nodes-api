@@ -43,6 +43,7 @@ docker compose down -v
 If `make` is available:
 
 ```bash
+make up-build
 make up
 make ps
 make db-migrate
@@ -51,6 +52,9 @@ make db-shell
 make down
 ```
 
+`make up-build` builds the image and starts the stack. `make up` starts the
+existing image without rebuilding; use it after `make build` or when nothing
+changed. Rebuild after source, dependency, or migration changes.
 `make bash` and `make db-shell` require the stack to be running. Run
 `make help` to list all targets.
 
@@ -114,7 +118,7 @@ cargo run -- migrate
 ```
 
 The command is idempotent and forward-only; it does not run down migrations.
-After adding a migration, rebuild the image with `make build` or `make up`.
+After adding a migration, rebuild the image with `make build` or `make up-build`.
 
 ## API
 
@@ -146,7 +150,7 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 The current suite covers domain formatting, configuration, import policy, and
-mempool parsing. PostgreSQL and HTTP adapter integration tests are a next step.
+mempool parsing. HTTP and PostgreSQL integration tests are a next step.
 
 ## Documentation
 
@@ -200,7 +204,7 @@ See [`docs/prd/Architecture.md`](docs/prd/Architecture.md) for the full reasonin
 
 The snapshot replacement strategy trusts the external endpoint to return a
 complete ranking. The non-empty check reduces the risk but does not prove
-completeness. Adapter integration tests would be the next investment.
+completeness. HTTP and PostgreSQL integration tests would be the next investment.
 
 ### Is there any other information you'd like us to know?
 

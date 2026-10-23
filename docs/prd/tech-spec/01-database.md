@@ -151,7 +151,7 @@ cargo run -- migrate
 
 The local command requires `DATABASE_URL` to be exported. Migrations are
 embedded at compile time, so rebuild the image after adding a migration:
-`make build` or `make up`.
+`make build` or `make up-build`.
 
 To add a migration:
 
