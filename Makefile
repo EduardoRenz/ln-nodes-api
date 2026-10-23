@@ -6,7 +6,7 @@ DB_NAME ?= lightning
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset build test
+.PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset build test test-unit test-integration test-live
 
 help:
 	@echo "Usage:"
@@ -20,7 +20,10 @@ help:
 	@echo "  make db-migrate  Apply pending database migrations"
 	@echo "  make db-reset    Stop the stack and delete the database volume"
 	@echo "  make build       Build the app image"
-	@echo "  make test        Run all Rust tests"
+	@echo "  make test        Run all tests (unit and integration)"
+	@echo "  make test-unit   Run unit tests only"
+	@echo "  make test-integration  Run gateway integration tests only"
+	@echo "  make test-live   Call the real mempool.space API"
 
 up:
 	$(COMPOSE) up -d
@@ -54,4 +57,20 @@ build:
 	$(COMPOSE) build
 
 test:
-	cargo test --all-targets
+	@echo "### Unit"
+	@cargo test --lib -- --skip integration_tests --skip live_tests
+	@echo "### Integration"
+	@cargo test --lib integration_tests
+	@echo "### Live (skipped, run: make test-live)"
+
+test-unit:
+	@echo "### Unit"
+	@cargo test --lib -- --skip integration_tests --skip live_tests
+
+test-integration:
+	@echo "### Integration"
+	@cargo test --lib integration_tests
+
+test-live:
+	@echo "### Live"
+	@cargo test --lib live_tests -- --ignored
