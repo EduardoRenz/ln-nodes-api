@@ -21,6 +21,7 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      PERSISTENCE: "${PERSISTENCE:-postgres}"
       DATABASE_URL: postgres://lightning:lightning@db:5432/lightning
       PORT: 3000
       IMPORT_INTERVAL_SECS: "${IMPORT_INTERVAL_SECS:-300}"

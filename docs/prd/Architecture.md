@@ -403,15 +403,18 @@ The composition root selects the concrete implementations and injects them:
 
 ```text
 main
- ├─ MempoolNodesGatewayFactory.create(&config) → gateway
- ├─ PostgresNodesRepositoryFactory.create()    → repository
- └─ build_app(gateway, repository, interval)    → App
+ ├─ MempoolNodesGatewayFactory.create(&config)        → gateway
+ ├─ ConfiguredNodesRepositoryFactory.create(&config)  → repository
+ └─ build_app(gateway, repository, interval)          → App
 ```
 
 - `build_app` receives already constructed dependencies, so it holds no
   infrastructure knowledge.
 - The repository and gateway factories use associated types, preserving static
   dispatch and avoiding `Box<dyn Trait>` and `async-trait`.
+- `ConfiguredNodesRepositoryFactory` maps `PERSISTENCE` to the matching
+  backend factory and returns `AnyNodesRepository`, the enum wrapper that
+  implements the port by delegation.
 - Migrations are a database lifecycle operation, not a repository behavior, so
   the `migrate` command calls `composition::run_migrations` instead of the
   factory.
@@ -420,7 +423,7 @@ main
 
 - One gateway implementation.
 - One repository implementation.
-- One PostgreSQL manager holding the pool.
+- One database manager holding the pool, when the selected backend uses one.
 - One router.
 - One import interval.
 
@@ -434,10 +437,12 @@ Rules:
 - No `lazy_static` or `once_cell`; `OnceLock` is only for rare process-wide
   infrastructure, not boundary implementations.
 - Tests create isolated instances; they never share production singletons.
-- No runtime mock mode selected by an environment variable yet. When it is
-  added, the mock gateway/repository must be compiled outside test builds and the
-  composition root must select the factory at runtime, for example through an
-  enum wrapper that implements the corresponding port.
+- Runtime repository selection is provided by the `PERSISTENCE` variable
+  (`IN_MEMORY`, `POSTGRES`, `SQLITE`). The composition root maps it to a
+  factory through `ConfiguredNodesRepositoryFactory`, and `AnyNodesRepository`
+  is the enum wrapper implementing the port; the in-memory variant reuses the
+  test mock, which is therefore compiled outside test builds. Adding another
+  backend means a new factory, a new enum variant, and a new match arm.
 
 ---
 
@@ -639,14 +644,16 @@ commands are in `../../README.md`.
 - Mock gateways and repositories are selected by test factories, not a runtime toggle.
 - Runtime SQL trades compile-time validation for simpler builds.
 - Full snapshot replacement is coarse.
-- PostgreSQL and Docker add setup compared with SQLite.
+- PostgreSQL remains the production default; SQLite and in-memory cover
+  lightweight setups.
 - A single instance is assumed.
 - The API is intentionally minimal.
 
 ### Revisit triggers
 
 - **Multiple replicas:** add an advisory lock or a worker.
-- **Runtime implementation selection:** add an enum wrapper implementing the relevant port.
+- **More repository backends:** extend the enum wrapper and its dispatch
+  factory.
 - **Large dataset:** add pagination and indexes for query patterns.
 - **Compile-time SQL safety:** adopt `sqlx::query!` with offline metadata.
 - **Browser clients:** add explicit CORS.

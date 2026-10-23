@@ -10,6 +10,7 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
+COPY migrations-sqlite ./migrations-sqlite
 
 RUN cargo build --release --locked
 

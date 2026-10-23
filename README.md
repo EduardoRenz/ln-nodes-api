@@ -1,11 +1,11 @@
 # Rust Lightning Nodes Service
 
 A small Rust service that imports Lightning Network node data from
-[mempool.space](https://mempool.space), stores it in PostgreSQL, and exposes it
-through a JSON API.
+[mempool.space](https://mempool.space), stores it in the selected repository
+(PostgreSQL, SQLite, or in memory), and exposes it through a JSON API.
 
 ```text
-mempool.space → background importer → PostgreSQL → GET /nodes
+mempool.space → background importer → repository (PERSISTENCE) → GET /nodes
 ```
 
 The request path never calls the external API.
@@ -66,7 +66,8 @@ changed. Rebuild after source, dependency, or migration changes.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | Required for local runs; supplied by Compose | PostgreSQL connection string. |
+| `PERSISTENCE` | Required | Repository backend: `IN_MEMORY`, `POSTGRES`, or `SQLITE` (case-insensitive). |
+| `DATABASE_URL` | Required for `POSTGRES`/`SQLITE`; supplied by Compose | Connection string. Must start with `sqlite:` when `PERSISTENCE=SQLITE`; ignored by `IN_MEMORY`. |
 | `PORT` | `3000` | HTTP port used by the Rust process. |
 | `IMPORT_INTERVAL_SECS` | `300` | Import interval in seconds; minimum `30`. |
 | `MEMPOOL_API_URL` | Challenge endpoint | External ranking API. |
@@ -76,8 +77,16 @@ changed. Rebuild after source, dependency, or migration changes.
 
 Notes:
 
-- Compose supplies `DATABASE_URL` internally as
-  `postgres://lightning:lightning@db:5432/lightning`.
+- `PERSISTENCE` selects the repository implementation at startup:
+  - `postgres` — the default production backend, backed by the `db` Compose
+    service.
+  - `sqlite` — a single-file database; use
+    `DATABASE_URL=sqlite://lightning.db?mode=rwc` (the `mode=rwc` part creates
+    the file if missing). Good for local development without Docker.
+  - `in_memory` — no database at all; the snapshot lives in process memory and
+    is lost on restart. Useful for demos and end-to-end smoke tests.
+- Compose supplies `PERSISTENCE` and `DATABASE_URL` internally; `PERSISTENCE`
+  defaults to `postgres` in Compose.
 - `APP_PORT` and `DB_PORT` only change host port mappings.
 - Inside Compose, `PORT` is fixed at `3000`; use `APP_PORT` to change the host
   port.
@@ -96,15 +105,31 @@ docker compose up -d db
 Run the app:
 
 ```bash
+export PERSISTENCE=postgres
 export DATABASE_URL=postgres://lightning:lightning@localhost:5432/lightning
 export IMPORT_INTERVAL_SECS=60
 cargo run
 ```
 
+Without any database, pick a different backend:
+
+```bash
+# SQLite file, no Docker needed.
+export PERSISTENCE=sqlite
+export DATABASE_URL=sqlite://lightning.db?mode=rwc
+cargo run
+
+# In-memory only; data is discarded on restart.
+export PERSISTENCE=in_memory
+cargo run
+```
+
 ## Migrations
 
-Migrations run automatically when the application starts. To apply pending
-migrations manually:
+Migrations run automatically when the application starts, for the selected
+backend (`migrations/` for PostgreSQL, `migrations-sqlite/` for SQLite; the
+in-memory backend has nothing to migrate). To apply pending migrations
+manually:
 
 ```bash
 make db-migrate
@@ -117,6 +142,7 @@ docker compose run --rm app migrate
 ```
 
 ```bash
+export PERSISTENCE=postgres
 export DATABASE_URL=postgres://lightning:lightning@localhost:5432/lightning
 cargo run -- migrate
 ```
@@ -128,8 +154,8 @@ After adding a migration, rebuild the image with `make build` or `make up-build`
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/nodes` | Returns the stored snapshot ordered by ranking; `500` with a generic error if PostgreSQL fails. |
-| `GET` | `/health` | Returns `200` when PostgreSQL responds, `503` otherwise. |
+| `GET` | `/nodes` | Returns the stored snapshot ordered by ranking; `500` with a generic error if the repository fails. |
+| `GET` | `/health` | Returns `200` when the repository responds, `503` otherwise. |
 
 Example `GET /nodes` item:
 
@@ -159,14 +185,15 @@ The suite is split by test module:
 | --- | --- |
 | `make test` | Unit and integration tests, grouped under `### Unit` and `### Integration` headings; the live test is skipped |
 | `make test-unit` | Domain, configuration, import policy, and parsing |
-| `make test-integration` | `MempoolNodesGateway` against a local `wiremock` server |
+| `make test-integration` | `MempoolNodesGateway` against a local `wiremock` server; `SqliteNodesRepository` against temp databases |
 | `make test-live` | One real `GET` against mempool.space |
 
 The integration tests exercise the real `reqwest` path and assert node parsing,
 invalid-record skipping, HTTP status mapping, invalid payloads, and connection
-failures. The live test is marked `#[ignore]`; run it with `make test-live` when
-network access is available. HTTP and PostgreSQL integration tests are a next
-step.
+failures. The SQLite integration tests assert snapshot replacement, rank
+ordering, persistence across reopen, and ping. The live test is marked
+`#[ignore]`; run it with `make test-live` when network access is available.
+HTTP and PostgreSQL integration tests are a next step.
 
 ## Documentation
 
@@ -220,7 +247,8 @@ See [`docs/prd/Architecture.md`](docs/prd/Architecture.md) for the full reasonin
 
 The snapshot replacement strategy trusts the external endpoint to return a
 complete ranking. The non-empty check reduces the risk but does not prove
-completeness. HTTP and PostgreSQL integration tests would be the next investment.
+completeness. HTTP and PostgreSQL integration tests would be the next
+investment; SQLite repository integration tests are already in place.
 
 ### Is there any other information you'd like us to know?
 

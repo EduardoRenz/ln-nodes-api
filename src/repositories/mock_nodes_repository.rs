@@ -3,6 +3,12 @@ use std::sync::{Arc, Mutex};
 use crate::domain::Node;
 use crate::repositories::nodes_repository::{NodesRepository, RepositoryError};
 
+/// In-memory implementation of the `NodesRepository` interface.
+///
+/// The mock doubles as the runtime `IN_MEMORY` backend: it is compiled
+/// outside test builds so the composition root can select it through
+/// configuration. The `fail_*` helpers exist only for tests; production
+/// code never calls them.
 #[derive(Debug, Clone, Default)]
 pub struct MockNodesRepository {
     state: Arc<Mutex<MockState>>,

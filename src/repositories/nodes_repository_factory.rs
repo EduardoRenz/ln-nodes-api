@@ -1,10 +1,14 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::config::Config;
+use crate::config::{Config, RepositoryType};
 use crate::infrastructure::postgres::Postgres;
+use crate::infrastructure::sqlite::Sqlite;
+use crate::repositories::any_nodes_repository::AnyNodesRepository;
+use crate::repositories::mock_nodes_repository::MockNodesRepository;
 use crate::repositories::nodes_repository::NodesRepository;
 use crate::repositories::postgres_nodes_repository::PostgresNodesRepository;
+use crate::repositories::sqlite_nodes_repository::SqliteNodesRepository;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryFactoryError {
@@ -46,20 +50,130 @@ impl NodesRepositoryFactory for PostgresNodesRepositoryFactory {
     }
 }
 
-// Future: a fully mocked environment selected through configuration.
-//
-// The mock repository must be compiled outside test builds, for example behind
-// a feature flag, and the composition root must pick the factory at runtime.
-//
-// pub struct MockNodesRepositoryFactory;
-//
-// impl NodesRepositoryFactory for MockNodesRepositoryFactory {
-//     type Repository = MockNodesRepository;
-//
-//     async fn create(
-//         &self,
-//         _config: &Config,
-//     ) -> Result<Self::Repository, RepositoryFactoryError> {
-//         Ok(MockNodesRepository::new())
-//     }
-// }
+pub struct SqliteNodesRepositoryFactory;
+
+impl NodesRepositoryFactory for SqliteNodesRepositoryFactory {
+    type Repository = SqliteNodesRepository;
+
+    async fn create(&self, config: &Config) -> Result<Self::Repository, RepositoryFactoryError> {
+        let database = Sqlite::connect(&config.database_url)
+            .await
+            .map_err(RepositoryFactoryError::Database)?;
+
+        database
+            .run_migrations()
+            .await
+            .map_err(RepositoryFactoryError::Migration)?;
+
+        Ok(SqliteNodesRepository::new(Arc::new(database)))
+    }
+}
+
+pub struct MockNodesRepositoryFactory;
+
+impl NodesRepositoryFactory for MockNodesRepositoryFactory {
+    type Repository = MockNodesRepository;
+
+    async fn create(&self, _config: &Config) -> Result<Self::Repository, RepositoryFactoryError> {
+        Ok(MockNodesRepository::new())
+    }
+}
+
+/// Builds the repository variant selected by `PERSISTENCE`.
+///
+/// Selection happens exactly once, in the composition root. This factory only
+/// delegates to the per-backend factory; it never implements repository
+/// behavior itself.
+pub struct ConfiguredNodesRepositoryFactory;
+
+impl NodesRepositoryFactory for ConfiguredNodesRepositoryFactory {
+    type Repository = AnyNodesRepository;
+
+    async fn create(&self, config: &Config) -> Result<Self::Repository, RepositoryFactoryError> {
+        match config.repository_type {
+            RepositoryType::InMemory => MockNodesRepositoryFactory
+                .create(config)
+                .await
+                .map(AnyNodesRepository::InMemory),
+            RepositoryType::Postgres => PostgresNodesRepositoryFactory
+                .create(config)
+                .await
+                .map(AnyNodesRepository::Postgres),
+            RepositoryType::Sqlite => SqliteNodesRepositoryFactory
+                .create(config)
+                .await
+                .map(AnyNodesRepository::Sqlite),
+        }
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    fn in_memory_config() -> Config {
+        Config {
+            repository_type: RepositoryType::InMemory,
+            database_url: String::new(),
+            port: 3000,
+            import_interval: std::time::Duration::from_secs(300),
+            mempool_url: "http://localhost".to_string(),
+            log_filter: "info".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn selects_in_memory_variant_from_config() {
+        let repository = ConfiguredNodesRepositoryFactory
+            .create(&in_memory_config())
+            .await
+            .expect("factory");
+
+        assert!(matches!(repository, AnyNodesRepository::InMemory(_)));
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::domain::{FirstSeen, Node, PublicKey, Sats};
+
+    #[tokio::test]
+    async fn selects_sqlite_variant_and_persists_snapshot() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("lightning.db");
+
+        let config = Config {
+            repository_type: RepositoryType::Sqlite,
+            database_url: format!("sqlite://{}?mode=rwc", path.display()),
+            port: 3000,
+            import_interval: std::time::Duration::from_secs(300),
+            mempool_url: "http://localhost".to_string(),
+            log_filter: "info".to_string(),
+        };
+
+        let repository = ConfiguredNodesRepositoryFactory
+            .create(&config)
+            .await
+            .expect("factory");
+
+        assert!(matches!(repository, AnyNodesRepository::Sqlite(_)));
+
+        repository
+            .save_snapshot(&[Node {
+                public_key: PublicKey::parse("03persist").expect("public key"),
+                alias: "persist".to_string(),
+                capacity: Sats::new(7),
+                first_seen: FirstSeen::from_unix(1_522_941_222).expect("timestamp"),
+                rank_position: 1,
+            }])
+            .await
+            .expect("save");
+
+        repository.ping().await.expect("ping");
+
+        let listed = repository.list().await.expect("list");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].public_key.as_str(), "03persist");
+    }
+}
