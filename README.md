@@ -50,6 +50,10 @@ make db-migrate
 make bash
 make db-shell
 make down
+make test
+make test-unit
+make test-integration
+make test-live
 ```
 
 `make up-build` builds the image and starts the stack. `make up` starts the
@@ -144,13 +148,25 @@ Example `GET /nodes` item:
 ## Tests
 
 ```bash
-cargo test --lib
+cargo test --all-targets
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 ```
 
-The current suite covers domain formatting, configuration, import policy, and
-mempool parsing. HTTP and PostgreSQL integration tests are a next step.
+The suite is split by test module:
+
+| Command | Scope |
+| --- | --- |
+| `make test` | Unit and integration tests, grouped under `### Unit` and `### Integration` headings; the live test is skipped |
+| `make test-unit` | Domain, configuration, import policy, and parsing |
+| `make test-integration` | `MempoolNodesGateway` against a local `wiremock` server |
+| `make test-live` | One real `GET` against mempool.space |
+
+The integration tests exercise the real `reqwest` path and assert node parsing,
+invalid-record skipping, HTTP status mapping, invalid payloads, and connection
+failures. The live test is marked `#[ignore]`; run it with `make test-live` when
+network access is available. HTTP and PostgreSQL integration tests are a next
+step.
 
 ## Documentation
 

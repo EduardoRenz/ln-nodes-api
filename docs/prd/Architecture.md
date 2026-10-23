@@ -546,11 +546,13 @@ Deliberately excluded:
 - `tower-http` — a small middleware covers request logging.
 - `dotenvy` — environment variables are explicit.
 - `anyhow` — typed errors are preferred; `Box<dyn Error>` is enough in `main`.
-- `mockall` / `wiremock` — hand-written fakes and pure parsing are clearer.
+- `mockall` — hand-written test doubles remain clearer than generated mocks.
 - `testcontainers` — PostgreSQL tests can use `sqlx::test` and Compose.
 - `lazy_static` / `once_cell` — `OnceLock` is enough for rare global values.
 - A DI container or service locator.
 - Any ORM — SQL is explicit and small.
+
+`wiremock` is a dev-dependency, used only by gateway HTTP integration tests.
 
 Key versions are in `../../README.md`; the full dependency list is in `Cargo.toml`.
 
@@ -558,8 +560,14 @@ Key versions are in `../../README.md`; the full dependency list is in `Cargo.tom
 
 ## 13. Testing
 
-Current coverage is unit-level: domain formatting, configuration, import
-policy, and mempool parsing.
+Current coverage is unit tests plus gateway integration tests:
+
+- Unit tests cover domain formatting, configuration, import policy, and mempool
+  parsing.
+- Integration tests exercise `MempoolNodesGateway` through the real `reqwest`
+  path against a local `wiremock` server.
+- A live smoke test calls the real mempool.space API and is marked `#[ignore]`,
+  so the default suite stays offline and deterministic.
 
 Target test matrix:
 
@@ -567,13 +575,16 @@ Target test matrix:
 | --- | --- |
 | Domain | Bitcoin and timestamp formatting, value validation |
 | Application | Import policy and use cases with `MockNodesGateway` and `MockNodesRepository` |
-| MempoolNodesGateway | Parsing, duplicates, missing/invalid fields |
+| MempoolNodesGateway (unit) | Parsing, duplicates, missing/invalid fields |
+| MempoolNodesGateway (integration) | HTTP fetch, invalid-record skipping, non-success status, invalid payload, connection failure |
+| MempoolNodesGateway (live) | One real fetch from mempool.space, ignored by default |
 | PostgreSQL repository | Snapshot replace, ordering, rollback, health |
 | HTTP layer | Status codes, JSON, error mapping, health |
 
 `MockNodesGateway` and `MockNodesRepository` are hand-written and compiled only
-in test builds. There is no mocking framework, HTTP mock server, or testcontainer
-in the core tests. Test commands are in `../../README.md`.
+in test builds. The gateway integration tests use `wiremock`; there is no
+testcontainer and no external network dependency in the default suite. Test
+commands are in `../../README.md`.
 
 ---
 
