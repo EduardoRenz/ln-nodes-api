@@ -134,7 +134,7 @@ requests.
 | `application` | Ports, use cases, application errors | `domain`, `gateways::nodes_gateway`, `repositories::nodes_repository` |
 | `gateways` | External API interface, mempool implementation, test double | `domain`, `reqwest` (implementation only) |
 | `repositories` | Persistence interface, PostgreSQL implementation, test double | `domain`, `sqlx` (implementation only) |
-| `http` | Inbound HTTP handlers and DTOs | `domain`, `application`, `axum` |
+| `routes` | Inbound HTTP routes, handlers, DTOs, and middleware | `domain`, `application`, `repositories::nodes_repository`, `axum`, `serde` |
 | `infrastructure` | Process-scoped PostgreSQL manager: pool, connection retry, migrations | `sqlx` |
 | `composition` / `main` | Wiring, configuration, lifecycle, factory selection | all layers |
 
@@ -666,6 +666,7 @@ commands are in `../../README.md`.
 
 - `../../README.md` — setup, environment variables, API examples, and commands.
 - `tech-spec/01-database.md` — database reference.
+- `tech-spec/02-api.md` — HTTP routing, middleware, rate limiting, and error mapping.
 - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
 - `src/application/` — import and list use cases.

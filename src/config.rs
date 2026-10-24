@@ -4,6 +4,8 @@ pub const DEFAULT_MEMPOOL_URL: &str =
     "https://mempool.space/api/v1/lightning/nodes/rankings/connectivity";
 pub const DEFAULT_IMPORT_INTERVAL_SECS: u64 = 300;
 pub const MIN_IMPORT_INTERVAL_SECS: u64 = 30;
+pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 60;
+pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 /// Repository implementation selected by the `PERSISTENCE` variable.
 ///
@@ -35,6 +37,8 @@ pub struct Config {
     pub import_interval: Duration,
     pub mempool_url: String,
     pub log_filter: String,
+    pub rate_limit_max_requests: u32,
+    pub rate_limit_window: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -45,6 +49,10 @@ pub enum ConfigError {
     Invalid { name: &'static str, value: String },
     #[error("IMPORT_INTERVAL_SECS must be at least {min} seconds")]
     IntervalTooSmall { min: u64 },
+    #[error("RATE_LIMIT_MAX_REQUESTS must be at least 1 request")]
+    ZeroRateLimitMaxRequests,
+    #[error("RATE_LIMIT_WINDOW_SECS must be at least 1 second")]
+    ZeroRateLimitWindow,
     #[error("DATABASE_URL must start with 'sqlite:' when PERSISTENCE=SQLITE")]
     SqliteDatabaseUrl,
 }
@@ -112,6 +120,34 @@ impl Config {
             non_empty(lookup("MEMPOOL_API_URL")).unwrap_or_else(|| DEFAULT_MEMPOOL_URL.to_string());
         let log_filter = non_empty(lookup("RUST_LOG")).unwrap_or_else(|| "info".to_string());
 
+        let rate_limit_max_requests = match lookup("RATE_LIMIT_MAX_REQUESTS") {
+            Some(raw) if !raw.trim().is_empty() => {
+                raw.parse::<u32>().map_err(|_| ConfigError::Invalid {
+                    name: "RATE_LIMIT_MAX_REQUESTS",
+                    value: raw,
+                })?
+            }
+            _ => DEFAULT_RATE_LIMIT_MAX_REQUESTS,
+        };
+
+        if rate_limit_max_requests == 0 {
+            return Err(ConfigError::ZeroRateLimitMaxRequests);
+        }
+
+        let rate_limit_window_secs = match lookup("RATE_LIMIT_WINDOW_SECS") {
+            Some(raw) if !raw.trim().is_empty() => {
+                raw.parse::<u64>().map_err(|_| ConfigError::Invalid {
+                    name: "RATE_LIMIT_WINDOW_SECS",
+                    value: raw,
+                })?
+            }
+            _ => DEFAULT_RATE_LIMIT_WINDOW_SECS,
+        };
+
+        if rate_limit_window_secs == 0 {
+            return Err(ConfigError::ZeroRateLimitWindow);
+        }
+
         Ok(Self {
             repository_type,
             database_url,
@@ -119,6 +155,8 @@ impl Config {
             import_interval: Duration::from_secs(interval_secs),
             mempool_url,
             log_filter,
+            rate_limit_max_requests,
+            rate_limit_window: Duration::from_secs(rate_limit_window_secs),
         })
     }
 }
@@ -156,6 +194,64 @@ mod tests {
         assert_eq!(config.import_interval, Duration::from_secs(300));
         assert_eq!(config.mempool_url, DEFAULT_MEMPOOL_URL);
         assert_eq!(config.log_filter, "info");
+        assert_eq!(
+            config.rate_limit_max_requests,
+            DEFAULT_RATE_LIMIT_MAX_REQUESTS
+        );
+        assert_eq!(config.rate_limit_window, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn parses_rate_limit_settings() {
+        let config = config_with(&[
+            ("PERSISTENCE", "POSTGRES"),
+            ("DATABASE_URL", "postgres://localhost/lightning"),
+            ("RATE_LIMIT_MAX_REQUESTS", "5"),
+            ("RATE_LIMIT_WINDOW_SECS", "10"),
+        ])
+        .expect("valid config");
+
+        assert_eq!(config.rate_limit_max_requests, 5);
+        assert_eq!(config.rate_limit_window, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn rejects_zero_rate_limit_max_requests() {
+        assert_eq!(
+            config_with(&[
+                ("PERSISTENCE", "POSTGRES"),
+                ("DATABASE_URL", "postgres://localhost/lightning"),
+                ("RATE_LIMIT_MAX_REQUESTS", "0"),
+            ]),
+            Err(ConfigError::ZeroRateLimitMaxRequests)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_rate_limit_window() {
+        assert_eq!(
+            config_with(&[
+                ("PERSISTENCE", "POSTGRES"),
+                ("DATABASE_URL", "postgres://localhost/lightning"),
+                ("RATE_LIMIT_WINDOW_SECS", "0"),
+            ]),
+            Err(ConfigError::ZeroRateLimitWindow)
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_rate_limit_max_requests() {
+        assert_eq!(
+            config_with(&[
+                ("PERSISTENCE", "POSTGRES"),
+                ("DATABASE_URL", "postgres://localhost/lightning"),
+                ("RATE_LIMIT_MAX_REQUESTS", "many"),
+            ]),
+            Err(ConfigError::Invalid {
+                name: "RATE_LIMIT_MAX_REQUESTS",
+                value: "many".to_string(),
+            })
+        );
     }
 
     #[test]

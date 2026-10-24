@@ -88,6 +88,7 @@ No query parameters, body, or authentication are required.
 
 | Status | Body | When |
 | --- | --- | --- |
+| `429` | `{"error":"too many requests"}` | Too many requests. A `Retry-After` header gives the seconds to wait. |
 | `500` | `{"error":"internal server error"}` | The node list cannot be read. |
 
 ---
@@ -126,6 +127,7 @@ Errors use a JSON object with a single `error` field:
 | --- | --- |
 | `200` | Success |
 | `404` | Unknown route |
+| `429` | Too many requests |
 | `500` | Internal error while reading nodes |
 | `503` | Database unavailable |
 
@@ -170,11 +172,3 @@ It does not provide:
 - Authentication or authorization
 - CORS
 - Response caching or ETags
-
----
-
-## Related documentation
-
-- [README](../README.md) — setup and run instructions.
-- [Architecture](prd/Architecture.md) — design decisions.
-- [Database](prd/tech-spec/01-database.md) — schema and persistence.

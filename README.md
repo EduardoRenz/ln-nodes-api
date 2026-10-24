@@ -72,6 +72,8 @@ changed. Rebuild after source, dependency, or migration changes.
 | `IMPORT_INTERVAL_SECS` | `300` | Import interval in seconds; minimum `30`. |
 | `MEMPOOL_API_URL` | Challenge endpoint | External ranking API. |
 | `RUST_LOG` | `info` | `tracing` filter. |
+| `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per client allowed in one rate-limit window. Must be at least `1`. |
+| `RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window length in seconds. Must be at least `1`. |
 | `APP_PORT` | `3000` | Compose-only host port for the app. |
 | `DB_PORT` | `5432` | Compose-only host port for PostgreSQL. |
 
@@ -88,6 +90,9 @@ Notes:
 - Compose supplies `PERSISTENCE` and `DATABASE_URL` internally; `PERSISTENCE`
   defaults to `postgres` in Compose.
 - `APP_PORT` and `DB_PORT` only change host port mappings.
+- Rate limiting applies to `GET /nodes` only, keyed by client IP, using a fixed
+  window. `GET /health` is deliberately unlimited so monitoring is never
+  blocked. Over-limit requests return `429` with a `Retry-After` header.
 - Inside Compose, `PORT` is fixed at `3000`; use `APP_PORT` to change the host
   port.
 - The Rust process does not load `.env` automatically. Export variables before
