@@ -22,7 +22,9 @@ The import model is a **full snapshot**:
 - On success, it replaces the entire `nodes` table inside a transaction.
 - On failure, the previous snapshot remains available.
 
-There is no incremental merge, audit table, or node history in the current scope.
+There is no incremental merge, audit table, or node history in the current
+scope. Import-run auditing is file-based rather than database-based — see
+[`03-logging.md`](03-logging.md).
 
 ---
 

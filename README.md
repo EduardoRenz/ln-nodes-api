@@ -75,8 +75,8 @@ changed. Rebuild after source, dependency, or migration changes.
 | `RUST_LOG` | `info` | `tracing` filter. |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per client allowed in one rate-limit window. Must be at least `1`. |
 | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window length in seconds. Must be at least `1`. |
-| `LOG_DIR` | `log` | Directory for import-run log files, one append-only file per UTC day (`YYYY-MM-DD.log`). Compose bind-mounts the project's `log/` at `/app/log` and runs the app as your uid/gid (`HOST_UID`/`HOST_GID`, default `1000`) so the files stay owned by you. Used by the `file` backend. |
-| `LOG_BACKEND` | `file` | Import-run log backend selected at startup. Only `file` exists today; the value is the seam future backends (Datadog, ...) plug into. Unknown values fail fast with `ConfigError::Invalid`. |
+| `LOG_DIR` | `log` | Directory for import-run log files, one append-only file per UTC day (`YYYY-MM-DD.log`). Used by the `file` backend; Compose bind-mounts the project's `log/` there. Details in [`03-logging.md`](docs/prd/tech-spec/03-logging.md). |
+| `LOG_BACKEND` | `file` | Import-run log backend selected at startup. Only `file` exists today; unknown values fail at startup. Reserved seam for future backends (Datadog, ...). |
 | `APP_PORT` | `3000` | Compose-only host port for the app. |
 | `DB_PORT` | `5432` | Compose-only host port for PostgreSQL. |
 
@@ -190,19 +190,8 @@ fetch or the database write fails.
 | `GET` | `/nodes` | Returns the stored snapshot ordered by ranking; `500` with a generic error if the repository fails. |
 | `GET` | `/health` | Returns `200` when the repository responds, `503` otherwise. |
 
-Example `GET /nodes` item:
-
-```json
-{
-  "public_key": "03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f",
-  "alias": "ACINQ",
-  "capacity": "360.10516297",
-  "first_seen": "2018-04-05T15:13:42Z"
-}
-```
-
-`capacity` is a string with eight decimal places, converted from satoshis using
-`1 BTC = 100,000,000 sats`. `first_seen` is RFC 3339 UTC with a `Z` suffix.
+Full contract — response shapes, field formats, status codes, and curl
+examples — lives in [`docs/api.md`](docs/api.md).
 
 ## Tests
 
@@ -212,34 +201,20 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 ```
 
-The suite is split by test module:
-
 | Command | Scope |
 | --- | --- |
 | `make test` | Unit and integration tests, grouped under `### Unit` and `### Integration` headings; the live test is skipped |
-| `make test-unit` | Domain, configuration, import policy, and parsing |
+| `make test-unit` | Domain, configuration, import policy, parsing, routes, and logging |
 | `make test-integration` | `MempoolNodesGateway` against a local `wiremock` server; `SqliteNodesRepository` against temp databases |
 | `make test-live` | One real `GET` against mempool.space, plus the end-to-end HTTP test. Sources `.env` for any variable you have not already exported. |
 | `cargo test --test e2e_live -- --ignored` | End-to-end HTTP test alone |
 
-The integration tests exercise the real `reqwest` path and assert node parsing,
-invalid-record skipping, HTTP status mapping, invalid payloads, and connection
-failures. The SQLite integration tests assert snapshot replacement, rank
-ordering, persistence across reopen, and ping.
-
-The route tests in `src/routes/` drive the `Router` in memory with
-`tower::ServiceExt::oneshot` and cover status codes, the `404` fallback, and
-rate-limit behaviour including `Retry-After` and the `/health` exemption.
-
-The end-to-end test in `tests/e2e_live.rs` boots the real `axum::serve` on an
-ephemeral port and calls it over HTTP. It follows the ambient configuration
-without overriding it, so it exercises whichever backend `PERSISTENCE`
-selects — in-memory, SQLite, and PostgreSQL all run the same assertions. It
-needs no network and performs no import, so the configured database is left
-untouched. Both the live and end-to-end tests are marked `#[ignore]`; run them
-with `make test-live`. The end-to-end test skips its rate-limit exhaustion
-assertions when the configured budget or window makes them impractical, and
-reports that it did so.
+The live and end-to-end tests are marked `#[ignore]`, so the default suite
+stays offline and deterministic. Strategy in depth:
+[`docs/prd/tech-spec/02-api.md`](docs/prd/tech-spec/02-api.md) (HTTP layer and
+end-to-end boot) and
+[`docs/prd/tech-spec/03-logging.md`](docs/prd/tech-spec/03-logging.md) (logging
+coverage).
 
 ## Documentation
 

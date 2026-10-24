@@ -6,6 +6,8 @@
 - **Related documents:**
   - `../../README.md` — setup, environment variables, API examples, and run commands.
   - `tech-spec/01-database.md` — schema, migrations, persistence, and database operations.
+  - `tech-spec/02-api.md` — HTTP routing, middleware, rate limiting, and error mapping.
+  - `tech-spec/03-logging.md` — the two logging mechanisms, the `RunLogger` port, and backends.
   - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 
 This document records architectural decisions only. Operational instructions belong in the README and database reference.
@@ -25,19 +27,20 @@ The service uses:
 - Framework-isolated boundary modules:
   - `http` for inbound HTTP;
   - `gateways` for external APIs;
-  - `repositories` for persistence.
+  - `repositories` for persistence;
+  - `logging` for import-run audit records.
 - `main.rs` and `composition.rs` as the composition root.
 - Native async traits with generics, without `async-trait`.
 - Explicit SQL with `sqlx`, without an ORM.
-- A repository factory and a gateway factory for production and test
-  implementations.
+- A factory per boundary (gateway, repository, run logger) for production and
+  test implementations.
 - Process-scoped singletons shared through `Arc`.
-- A single binary plus PostgreSQL, orchestrated by Docker Compose.
+- A single binary with three commands (`serve` by default, `migrate`,
+  `import`) plus PostgreSQL, orchestrated by Docker Compose.
 
-The design is intentionally small: **two ports, two use cases, three production
-boundary implementations, and two factories**. Clean Architecture requires
-dependencies to point inward and effects to stay at the edges, not a class per
-concept.
+The design is intentionally small: **two use cases, three ports, and one
+factory per boundary**. Clean Architecture requires dependencies to point
+inward and effects to stay at the edges, not a class per concept.
 
 ---
 
@@ -65,7 +68,7 @@ Priorities:
 
 Non-goals:
 
-- Authentication, authorization, rate limiting, or API keys.
+- Authentication, authorization, or API keys.
 - Pagination, filtering, caching, or ETags.
 - Metrics, dashboards, or distributed tracing.
 - OpenAPI generation.
@@ -81,8 +84,8 @@ Non-goals:
    knows only `domain` and its ports.
 2. **Effects live at the edges.** HTTP, SQL, network, time, and logging are
    boundary concerns.
-3. **Ports exist only at real boundaries.** The boundaries are node ingestion
-   and node persistence.
+3. **Ports exist only at real boundaries.** The boundaries are node ingestion,
+   node persistence, and import-run auditing.
 4. **Pure functions decide, imperative code executes.** Import policy is
    testable without I/O.
 5. **Make illegal states unrepresentable.** Validated newtypes replace raw
@@ -95,7 +98,7 @@ Non-goals:
 9. **Singleton means process scope, not global access.** Instances are created
    once and shared explicitly.
 10. **Names reflect responsibility.** Repositories persist and query; gateways
-    integrate with external services.
+    integrate with external services; run loggers record import runs.
 
 ---
 
@@ -106,7 +109,8 @@ main.rs / composition.rs
         │ wires concrete implementations
         ├── http         (inbound HTTP)
         ├── gateways     (external APIs)
-        └── repositories (persistence)
+        ├── repositories (persistence)
+        └── logging      (import-run audit)
                      │ implement ports
                      ▼
 application (use cases + ports)
@@ -115,14 +119,16 @@ application (use cases + ports)
 domain (pure types, invariants, formatting)
 ```
 
-There are two paths:
+There are two paths, plus a write-only audit side-channel:
 
 - **Import:** scheduler → `NodesGateway` → import use case → `NodesRepository`
   → PostgreSQL.
 - **Read:** HTTP → list use case → `NodesRepository` → PostgreSQL.
+- **Audit:** every import run → `RunLogger` → one line in `LOG_DIR`
+  (`tech-spec/03-logging.md`).
 
 The read path never calls the external API. The import path never handles HTTP
-requests.
+requests. The audit sink is written from the import side only.
 
 ---
 
@@ -135,6 +141,7 @@ requests.
 | `gateways` | External API interface, mempool implementation, test double | `domain`, `reqwest` (implementation only) |
 | `repositories` | Persistence interface, PostgreSQL implementation, test double | `domain`, `sqlx` (implementation only) |
 | `routes` | Inbound HTTP routes, handlers, DTOs, and middleware | `domain`, `application`, `repositories::nodes_repository`, `axum`, `serde` |
+| `logging` | Import-run audit port (`RunLogger`), file backend, reusable file sink, and the logger factory | `application` (outcome types), `config`, `chrono`, `std`, `tracing` (warn only) |
 | `infrastructure` | Process-scoped PostgreSQL manager: pool, connection retry, migrations | `sqlx` |
 | `composition` / `main` | Wiring, configuration, lifecycle, factory selection | all layers |
 
@@ -143,6 +150,8 @@ Forbidden dependencies:
 - `domain` must not import `axum`, `sqlx`, `reqwest`, or `serde`.
 - `application` must not import `axum`, `sqlx`, `reqwest`, or `serde`.
 - `application` must not import any concrete gateway or repository module.
+- `application` must not import `logging`; the audit sink is recorded by the
+  scheduler and the CLI, not by the use cases.
 - `domain` must not perform I/O, read environment variables, or log.
 - `application` must not know concrete implementation types.
 - Boundary modules must not call each other directly.
@@ -171,12 +180,13 @@ Formatting rules:
 - `first_seen` uses RFC 3339 UTC with a `Z` suffix.
 - `public_key` and `alias` are never transformed.
 
-The application depends on two ports:
+Three ports exist, each at a real boundary:
 
 | Port | Responsibility | Methods |
 | --- | --- | --- |
 | `NodesGateway` | External node source | `fetch` |
 | `NodesRepository` | Persistence and querying | `save_snapshot`, `list`, `ping` |
+| `RunLogger` | Import-run audit records — deliberately not a leveled logger | `record`, `record_or_warn` |
 
 Ports use native async traits with `impl Future + Send` and generic dispatch.
 This avoids `async-trait`, boxing, and dynamic dispatch. The trade-off is that
@@ -189,6 +199,9 @@ Terminology:
   `PostgresNodesRepository`).
 - **Gateway** — external service integration (`NodesGateway`,
   `MempoolNodesGateway`).
+- **Run logger** — audit sink for import runs (`RunLogger`,
+  `FileRunLogger`); not a leveled logger — diagnostics stay with `tracing`.
+- **Sink** — reusable file mechanics behind a logging backend (`FileSink`).
 - **Boundary implementation** — a concrete implementation of a port.
 - **Factory** — creates and returns a port implementation. It never implements
   the port itself.
@@ -405,7 +418,8 @@ The composition root selects the concrete implementations and injects them:
 main
  ├─ MempoolNodesGatewayFactory.create(&config)        → gateway
  ├─ ConfiguredNodesRepositoryFactory.create(&config)  → repository
- └─ build_app(gateway, repository, interval)          → App
+ ├─ ConfiguredRunLoggerFactory.create(&config)        → logger
+ └─ build_app(gateway, repository, &config)           → App
 ```
 
 - `build_app` receives already constructed dependencies, so it holds no
@@ -415,6 +429,10 @@ main
 - `ConfiguredNodesRepositoryFactory` maps `PERSISTENCE` to the matching
   backend factory and returns `AnyNodesRepository`, the enum wrapper that
   implements the port by delegation.
+- `ConfiguredRunLoggerFactory` maps `LOG_BACKEND` to the audit backend and
+  returns `AnyRunLogger`. The instance is created once per process and used by
+  either the one-shot `import` command or the scheduler task
+  (`tech-spec/03-logging.md`).
 - Migrations are a database lifecycle operation, not a repository behavior, so
   the `migrate` command calls `composition::run_migrations` instead of the
   factory.
@@ -458,6 +476,9 @@ The importer uses a **full snapshot**, not incremental merging:
 - An empty or fully invalid response does not replace the current snapshot.
 - A successful import replaces the snapshot transactionally.
 - The request path never calls the external API.
+- Every run — immediate, periodic, skipped, or failed — appends one line to
+  the daily audit file through `RunLogger`; a logging failure degrades to a
+  warning and never interrupts the loop (`tech-spec/03-logging.md`).
 
 Failure semantics are fail-closed:
 
@@ -565,14 +586,20 @@ Key versions are in `../../README.md`; the full dependency list is in `Cargo.tom
 
 ## 13. Testing
 
-Current coverage is unit tests plus gateway integration tests:
+Current coverage spans unit tests, gateway/repository integration tests,
+route tests, and the logging module; live tests are ignored by default:
 
-- Unit tests cover domain formatting, configuration, import policy, and mempool
-  parsing.
+- Unit tests cover domain formatting, configuration, import policy, mempool
+  parsing, and the logging module (line format, date partitioning, sink
+  mechanics, factory wiring).
 - Integration tests exercise `MempoolNodesGateway` through the real `reqwest`
-  path against a local `wiremock` server.
-- A live smoke test calls the real mempool.space API and is marked `#[ignore]`,
-  so the default suite stays offline and deterministic.
+  path against a local `wiremock` server, and `SqliteNodesRepository` against
+  temporary databases.
+- Route tests drive the real `Router` in memory and cover status codes, the
+  `404` fallback, and rate limiting.
+- A live smoke test calls the real mempool.space API and an end-to-end test
+  boots a real server; both are marked `#[ignore]`, so the default suite stays
+  offline and deterministic.
 
 Target test matrix:
 
@@ -585,6 +612,7 @@ Target test matrix:
 | MempoolNodesGateway (live) | One real fetch from mempool.space, ignored by default |
 | PostgreSQL repository | Snapshot replace, ordering, rollback, health |
 | HTTP layer | Status codes, JSON, error mapping, health |
+| Logging | Line format, date partitioning, `FileSink` mechanics, factory wiring |
 
 `MockNodesGateway` and `MockNodesRepository` are hand-written and compiled only
 in test builds. The gateway integration tests use `wiremock`; there is no
@@ -604,6 +632,7 @@ commands are in `../../README.md`.
 | Process-scoped singleton | Explicit ownership; no global access point. | `static OnceLock`, easier global access but harder tests. |
 | Single crate | Weaker compile-time layer enforcement. | A workspace. |
 | In-process scheduler | Simple deployment; one replica only. | A dedicated worker. |
+| File-only audit log | Append-only daily files; no rotation, retention, or structured export. | A hosted log backend behind the same `RunLogger` port. |
 | Runtime SQL | No compile-time SQL validation. | `sqlx::query!` with offline metadata. |
 | No pagination/cache/auth/CORS | Minimal scope; less flexible API. | Add at the boundary layer when needed. |
 
@@ -611,14 +640,18 @@ commands are in `../../README.md`.
 
 ## 15. Guardrails
 
-- Maximum of two ports and two use cases.
-- No trait for clock, logger, or configuration.
+- Maximum of three ports (gateway, repository, audit logger) and two use
+  cases.
+- No trait for clock or configuration; `RunLogger` is the one deliberate
+  logging port — an audit sink behind a swappable backend, not a diagnostics
+  facade.
 - No generic CRUD repository.
 - No workspace, DI container, domain events, CQRS, or message bus.
 - One factory trait per boundary; no service locator and no global accessor.
 - No global mutable boundary singleton.
 - No `Arc<Mutex<_>>`; use immutable sharing or channels.
-- No mockall, wiremock, or testcontainers.
+- No mockall or testcontainers; `wiremock` only as a dev-dependency for
+  gateway HTTP tests.
 - No framework types in `domain` or `application`.
 - No abstraction without a real boundary and a test seam.
 - No premature pagination, caching, or authentication.
@@ -654,6 +687,8 @@ commands are in `../../README.md`.
 - **Multiple replicas:** add an advisory lock or a worker.
 - **More repository backends:** extend the enum wrapper and its dispatch
   factory.
+- **More log backends:** add an enum variant and a factory arm
+  (`tech-spec/03-logging.md` §7).
 - **Large dataset:** add pagination and indexes for query patterns.
 - **Compile-time SQL safety:** adopt `sqlx::query!` with offline metadata.
 - **Browser clients:** add explicit CORS.
@@ -667,6 +702,7 @@ commands are in `../../README.md`.
 - `../../README.md` — setup, environment variables, API examples, and commands.
 - `tech-spec/01-database.md` — database reference.
 - `tech-spec/02-api.md` — HTTP routing, middleware, rate limiting, and error mapping.
+- `tech-spec/03-logging.md` — logging mechanisms, the `RunLogger` port, and backends.
 - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
 - `src/application/` — import and list use cases.
@@ -674,4 +710,5 @@ commands are in `../../README.md`.
 - `src/gateways/` — external API gateway interface and implementations.
 - `src/repositories/` — repository interface and implementations.
 - `src/infrastructure/` — process-scoped PostgreSQL manager.
+- `src/logging/` — audit port, file backend, file sink, and factories.
 - `src/composition.rs` — composition root wiring.
