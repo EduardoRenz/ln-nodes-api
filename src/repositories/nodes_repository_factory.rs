@@ -12,9 +12,11 @@ use crate::repositories::sqlite_nodes_repository::SqliteNodesRepository;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepositoryFactoryError {
-    #[error("failed to connect to PostgreSQL")]
+    // Both embed the sqlx cause so a failed startup or CLI import explains
+    // itself on stderr and in the audit record.
+    #[error("failed to connect to PostgreSQL: {0}")]
     Database(#[source] sqlx::Error),
-    #[error("failed to run database migrations")]
+    #[error("failed to run database migrations: {0}")]
     Migration(#[source] sqlx::migrate::MigrateError),
 }
 
@@ -134,6 +136,18 @@ mod unit_tests {
             .expect("factory");
 
         assert!(matches!(repository, AnyNodesRepository::InMemory(_)));
+    }
+
+    #[test]
+    fn factory_error_display_carries_the_sqlx_cause() {
+        let error = RepositoryFactoryError::Database(sqlx::Error::PoolTimedOut);
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.starts_with("failed to connect to PostgreSQL: "),
+            "unexpected message: {rendered}"
+        );
+        assert!(rendered.contains("pool timed out"));
     }
 }
 

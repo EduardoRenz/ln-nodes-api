@@ -514,8 +514,11 @@ Error layering:
 framework error → port error → application error → HTTP error
 ```
 
-Concrete causes are logged at the boundary; internal details are never
-returned to clients.
+Concrete causes are logged at the boundary and carried inside the error
+values (`RepositoryError::Unavailable` holds the database cause as a string;
+application errors embed their sources in the display), so console lines,
+audit records, and exit output stay self-contained; internal details are
+never returned to clients.
 
 Concurrency:
 

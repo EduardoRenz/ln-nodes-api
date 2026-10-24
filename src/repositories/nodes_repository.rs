@@ -4,8 +4,13 @@ use crate::domain::Node;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RepositoryError {
-    #[error("database operation failed")]
-    Unavailable,
+    /// The database could not serve the operation. The payload is the
+    /// concrete cause (a string, so the port stays framework-free) and is
+    /// the *entire* display: every caller already adds its own context
+    /// ("failed to list nodes: …", "repository operation failed: …"), so
+    /// repeating a generic prefix here would only make chains noisy.
+    #[error("{0}")]
+    Unavailable(String),
     #[error("database returned invalid domain data")]
     InvalidData,
 }

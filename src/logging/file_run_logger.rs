@@ -79,6 +79,7 @@ fn format_run(
 mod tests {
     use super::*;
     use crate::gateways::nodes_gateway::GatewayError;
+    use crate::repositories::nodes_repository::RepositoryError;
     use chrono::TimeZone;
     use std::path::Path;
 
@@ -162,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn records_failed_runs() {
+    fn records_failed_runs_with_the_full_cause() {
         let dir = tempfile::tempdir().expect("temp dir");
         let result: Result<ImportOutcome, ImportError> =
             Err(ImportError::Gateway(GatewayError::Request));
@@ -171,9 +172,33 @@ mod tests {
             .record_at(stamp(0), &result)
             .expect("failed run");
 
+        // The line carries the whole chain, so the file alone explains the
+        // failure without the console output.
         assert_eq!(
             read(dir.path(), "2026-10-14"),
-            "2026-10-14T17:46:40Z error persistence=postgres failed to fetch nodes\n"
+            "2026-10-14T17:46:40Z error persistence=postgres failed to fetch nodes: mempool request failed\n"
+        );
+    }
+
+    #[test]
+    fn records_repository_failures_with_the_database_cause() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let result: Result<ImportOutcome, ImportError> =
+            Err(ImportError::Repository(RepositoryError::Unavailable(
+                "error communicating with database: connection refused".to_string(),
+            )));
+
+        logger(dir.path(), RepositoryType::Postgres)
+            .record_at(stamp(0), &result)
+            .expect("failed run");
+
+        let contents = read(dir.path(), "2026-10-14");
+        assert!(
+            contents.contains(
+                "error persistence=postgres repository operation failed: \
+                 error communicating with database: connection refused"
+            ),
+            "unexpected contents: {contents}"
         );
     }
 

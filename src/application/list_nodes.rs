@@ -3,7 +3,9 @@ use crate::repositories::nodes_repository::{NodesRepository, RepositoryError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ListError {
-    #[error("failed to list nodes")]
+    // Source embedded in the display: the HTTP layer logs this value, so the
+    // concrete database cause reaches the console and the access trail.
+    #[error("failed to list nodes: {0}")]
     Repository(#[source] RepositoryError),
 }
 
@@ -49,7 +51,15 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ListError::Repository(RepositoryError::Unavailable))
+            Err(ListError::Repository(RepositoryError::Unavailable(_)))
         ));
+    }
+
+    #[test]
+    fn error_display_carries_the_database_cause() {
+        let error =
+            ListError::Repository(RepositoryError::Unavailable("table missing".to_string()));
+
+        assert_eq!(error.to_string(), "failed to list nodes: table missing");
     }
 }

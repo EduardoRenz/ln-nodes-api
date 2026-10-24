@@ -95,7 +95,7 @@ The line format (one line per run, append-only):
 ```text
 <RFC 3339 UTC> imported persistence=<backend> count=<total> new=<delta>
 <RFC 3339 UTC> skipped persistence=<backend> mempool returned no valid nodes
-<RFC 3339 UTC> error persistence=<backend> <ImportError message>
+<RFC 3339 UTC> error persistence=<backend> <ImportError message with cause>
 ```
 
 Examples:
@@ -103,8 +103,15 @@ Examples:
 ```text
 2026-10-24T03:54:43Z imported persistence=sqlite count=100 new=100
 2026-10-24T03:59:12Z imported persistence=postgres count=100 new=13
-2026-10-24T04:02:00Z error persistence=sqlite failed to fetch nodes
+2026-10-24T04:02:00Z error persistence=sqlite failed to fetch nodes: mempool request failed
+2026-10-24T19:22:55Z error persistence=postgres repository operation failed: error communicating with database: failed to lookup address information: Temporary failure in name resolution
 ```
+
+**Error lines carry the full cause chain.** `ImportError`, `ListError`, and
+`RepositoryFactoryError` embed their `source` in the display, and
+`RepositoryError::Unavailable` carries the concrete database cause as a
+string — so the file alone answers *why* a run failed, without the console
+(§6.1).
 
 Field meanings:
 
@@ -169,7 +176,7 @@ Implementation notes:
 | --- | --- | --- |
 | `LOG_BACKEND` | `file` | Backend selected at startup. Unknown values fail fast with `ConfigError::Invalid { name: "LOG_BACKEND", ... }` — the seam future backends plug into. |
 | `LOG_DIR` | `log` | Directory for the `file` backend. Compose overrides it to `/app/log` (bind-mounted `log/`, `HOST_UID`/`HOST_GID` so files stay owned by the host user). |
-| `RUST_LOG` | `info` | Console diagnostics only; has no effect on the audit file. |
+| `RUST_LOG` | `info` | Console diagnostics only; has no effect on the audit file. Tuning suggestions in §6.1. |
 
 Like every other setting, the Rust process does not load `.env` on its own — export the variables (or `set -a; source .env; set +a`) when running outside Compose.
 
@@ -179,7 +186,36 @@ Like every other setting, the Rust process does not load `.env` on its own — e
 
 - **A logging failure never interrupts an import.** `record_or_warn` degrades to `tracing::warn!`; the scheduler keeps its loop and the `import` command keeps its exit code (0 for imported/skipped, non-zero only for fetch/database failures).
 - **A failed run is still recorded.** The `error persistence=...` line exists so the daily file is a complete audit, not a success log.
+- **A run attempt that cannot reach the database is recorded too.** The `import` command wraps a repository *construction* failure (`repository_failure` in `main.rs`) as a run failure, so a CLI import against a down database produces an audit line instead of disappearing into stderr.
+- **`serve` startup failures are console-only by design.** If the process cannot build the repository it exits before any run exists; the scheduler only records once it is running. Diagnose boot crashes with `docker compose logs app` (retry ladder in §6.1).
 - **The write itself is best-effort append.** No rotation, no retention, no crash-recovery queue — out of scope (see README trade-offs).
+
+### 6.1 Operating under failure
+
+What each channel shows when the database is down (verified against the live
+Compose stack):
+
+| Where you look | Content |
+| --- | --- |
+| `log/YYYY-MM-DD.log` | `<ts> error persistence=postgres repository operation failed: <concrete sqlx cause>` — one line per attempted run, self-contained |
+| Console (`docker compose logs app`) | Boundary line with the raw cause (`repositories::postgres_nodes_repository: database operation failed error=…`), then the contextual line (`scheduler: import failed…`, `routes::errors: request failed…`), then the access line (`http request … status=500`) |
+| Boot / CLI import | `WARN … connection failed; retrying attempt=N` (backoff), `ERROR … connection attempts exhausted attempt=10`, exit non-zero |
+| Client | `GET /nodes` → `500 {"error":"internal server error"}` (never leaks internals); `GET /health` → `503 {"status":"unavailable"}` |
+
+Recovery is automatic: the next scheduler tick records a normal `imported`
+line; the pool needs no restart.
+
+**Tuning `RUST_LOG`.** The default `info` is verbose during an outage:
+`sqlx` logs pool ping failures and the access log prints every request.
+For a quieter incident view:
+
+```bash
+RUST_LOG=rust_lightning_service=info,sqlx=warn
+```
+
+Set `debug` on `rust_lightning_service::scheduler` while investigating import
+cadence, or `warn` globally when only failures matter. None of this affects
+the audit file, which is written regardless of `RUST_LOG`.
 
 ---
 
@@ -207,6 +243,7 @@ If the goal instead is "export **all console diagnostics** to Datadog/Sentry", t
 | Layer | Where | What |
 | --- | --- | --- |
 | Line format + partitioning | `file_run_logger.rs` (unit) | exact lines, per-date files, skipped/error rows, current-UTC path |
+| Error cause chains | `import_nodes.rs`, `list_nodes.rs`, `nodes_repository_factory.rs`, `main.rs` (unit) | displays embed the concrete cause (database, sqlx, factory) so audit lines explain themselves |
 | File mechanics | `file_sink.rs` (unit) | default/custom patterns, directory creation, unreachable-path error carries the path |
 | Delegation | `any_run_logger.rs` (unit) | variant forwards success and error; `record_or_warn` returns even when the sink fails |
 | Wiring | `run_logger_factory.rs` (unit) | default selection, `LOG_BACKEND` selection, records land in `LOG_DIR` |

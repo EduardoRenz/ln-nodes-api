@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
-use rust_lightning_service::application::import_nodes::{ImportOutcome, import_nodes};
+use rust_lightning_service::application::import_nodes::{ImportError, ImportOutcome, import_nodes};
 use rust_lightning_service::composition::{build_app, run_migrations};
 use rust_lightning_service::config::Config;
 use rust_lightning_service::gateways::nodes_gateway_factory::{
@@ -14,8 +14,9 @@ use rust_lightning_service::logging::run_logger::RunLogger;
 use rust_lightning_service::logging::run_logger_factory::{
     ConfiguredRunLoggerFactory, RunLoggerFactory,
 };
+use rust_lightning_service::repositories::nodes_repository::RepositoryError;
 use rust_lightning_service::repositories::nodes_repository_factory::{
-    ConfiguredNodesRepositoryFactory, NodesRepositoryFactory,
+    ConfiguredNodesRepositoryFactory, NodesRepositoryFactory, RepositoryFactoryError,
 };
 use rust_lightning_service::{scheduler, telemetry};
 
@@ -126,13 +127,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 /// One-shot import: fetch once, persist, record the run, and report.
 ///
 /// The repository factory runs pending migrations, so a bare import against
-/// a fresh database works without a separate migrate step. Exit semantics:
-/// a successful or skipped import is `Ok`; a fetch or database failure
-/// propagates so the process exits non-zero.
+/// a fresh database works without a separate migrate step. The run starts
+/// when the gateway is built: a repository that cannot be constructed is
+/// still an *attempted* import, so it is recorded like any other failure and
+/// the daily file stays a complete audit even when the database never
+/// answers. Exit semantics: a successful or skipped import is `Ok`; a fetch
+/// or database failure propagates so the process exits non-zero.
 async fn run_import(config: &Config, logger: &impl RunLogger) -> Result<(), Box<dyn Error>> {
     let gateway = MempoolNodesGatewayFactory.create(config)?;
-    let repository = ConfiguredNodesRepositoryFactory.create(config).await?;
-    let outcome = import_nodes(&gateway, &repository).await;
+
+    let outcome = match ConfiguredNodesRepositoryFactory.create(config).await {
+        Ok(repository) => import_nodes(&gateway, &repository).await,
+        Err(error) => Err(repository_failure(error)),
+    };
 
     logger.record_or_warn(&outcome).await;
 
@@ -147,6 +154,12 @@ async fn run_import(config: &Config, logger: &impl RunLogger) -> Result<(), Box<
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// Wraps a repository construction failure as a run failure so the attempt
+/// reaches the audit file with its cause intact.
+fn repository_failure(error: RepositoryFactoryError) -> ImportError {
+    ImportError::Repository(RepositoryError::Unavailable(error.to_string()))
 }
 
 async fn shutdown_signal() {
@@ -218,5 +231,17 @@ mod tests {
             parse(&["migrate", "extra"]),
             Err("too many arguments".to_string())
         );
+    }
+
+    #[test]
+    fn repository_failure_keeps_the_cause_for_the_audit_line() {
+        let error = repository_failure(RepositoryFactoryError::Database(sqlx::Error::PoolTimedOut));
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.starts_with("repository operation failed: failed to connect to PostgreSQL: "),
+            "unexpected message: {rendered}"
+        );
+        assert!(rendered.contains("pool timed out"));
     }
 }

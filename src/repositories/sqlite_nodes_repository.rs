@@ -104,7 +104,9 @@ impl TryFrom<NodeRow> for Node {
 
 fn db_error(error: sqlx::Error) -> RepositoryError {
     tracing::error!(%error, "database operation failed");
-    RepositoryError::Unavailable
+    // Keep the cause in the value: callers log it again and the audit line
+    // carries it without needing the console.
+    RepositoryError::Unavailable(error.to_string())
 }
 
 #[cfg(test)]

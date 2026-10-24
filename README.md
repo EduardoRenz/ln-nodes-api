@@ -72,7 +72,7 @@ changed. Rebuild after source, dependency, or migration changes.
 | `PORT` | `3000` | HTTP port used by the Rust process. |
 | `IMPORT_INTERVAL_SECS` | `300` | Import interval in seconds; minimum `30`. |
 | `MEMPOOL_API_URL` | Challenge endpoint | External ranking API. |
-| `RUST_LOG` | `info` | `tracing` filter. |
+| `RUST_LOG` | `info` | `tracing` filter for console diagnostics; no effect on the audit file. Quieter incident view: `rust_lightning_service=info,sqlx=warn`. |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per client allowed in one rate-limit window. Must be at least `1`. |
 | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window length in seconds. Must be at least `1`. |
 | `LOG_DIR` | `log` | Directory for import-run log files, one append-only file per UTC day (`YYYY-MM-DD.log`). Used by the `file` backend; Compose bind-mounts the project's `log/` there. Details in [`03-logging.md`](docs/prd/tech-spec/03-logging.md). |

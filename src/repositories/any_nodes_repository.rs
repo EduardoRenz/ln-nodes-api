@@ -79,6 +79,8 @@ mod unit_tests {
         mock.fail_list();
         let repository = AnyNodesRepository::InMemory(mock);
 
-        assert_eq!(repository.list().await, Err(RepositoryError::Unavailable));
+        let result = repository.list().await;
+
+        assert!(matches!(result, Err(RepositoryError::Unavailable(_))));
     }
 }

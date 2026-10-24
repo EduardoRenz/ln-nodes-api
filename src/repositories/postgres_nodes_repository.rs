@@ -105,5 +105,25 @@ impl TryFrom<NodeRow> for Node {
 
 fn db_error(error: sqlx::Error) -> RepositoryError {
     tracing::error!(%error, "database operation failed");
-    RepositoryError::Unavailable
+    // Keep the cause in the value: callers log it again, the HTTP layer
+    // embeds it in `request failed`, and the audit line carries it too.
+    RepositoryError::Unavailable(error.to_string())
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+
+    #[test]
+    fn db_error_carries_the_sqlx_cause() {
+        let error = db_error(sqlx::Error::PoolTimedOut);
+
+        // The value IS the cause; the `database operation failed` context
+        // lives in the boundary log line above.
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("pool timed out"),
+            "unexpected message: {rendered}"
+        );
+    }
 }

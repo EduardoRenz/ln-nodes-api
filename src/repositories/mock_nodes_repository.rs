@@ -23,6 +23,10 @@ struct MockState {
     fail_ping: bool,
 }
 
+/// Message carried by injected failures. Tests assert the variant with
+/// `matches!` rather than this exact string.
+const MOCK_FAILURE: &str = "mock repository unavailable";
+
 impl MockNodesRepository {
     pub fn new() -> Self {
         Self::default()
@@ -67,7 +71,7 @@ impl NodesRepository for MockNodesRepository {
         let mut state = self.state();
 
         if state.fail_save {
-            return Err(RepositoryError::Unavailable);
+            return Err(RepositoryError::Unavailable(MOCK_FAILURE.to_string()));
         }
 
         state.save_calls += 1;
@@ -79,7 +83,7 @@ impl NodesRepository for MockNodesRepository {
         let state = self.state();
 
         if state.fail_list {
-            return Err(RepositoryError::Unavailable);
+            return Err(RepositoryError::Unavailable(MOCK_FAILURE.to_string()));
         }
 
         Ok(state.nodes.clone())
@@ -89,7 +93,7 @@ impl NodesRepository for MockNodesRepository {
         let state = self.state();
 
         if state.fail_ping {
-            return Err(RepositoryError::Unavailable);
+            return Err(RepositoryError::Unavailable(MOCK_FAILURE.to_string()));
         }
 
         Ok(())

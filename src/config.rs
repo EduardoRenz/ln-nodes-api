@@ -9,6 +9,33 @@ pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 10;
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 pub const DEFAULT_LOG_DIR: &str = "log";
 
+/// Backend selected by the `LOG_BACKEND` variable.
+///
+/// Only the file backend exists today; the enum is the seam future backends
+/// (Datadog, Sentry) plug into without touching the call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogBackend {
+    #[default]
+    File,
+}
+
+impl LogBackend {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_uppercase().as_str() {
+            "FILE" => Some(Self::File),
+            _ => None,
+        }
+    }
+
+    /// Canonical lowercase label used in logs, regardless of how
+    /// `LOG_BACKEND` was spelled.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+        }
+    }
+}
+
 /// Repository implementation selected by the `PERSISTENCE` variable.
 ///
 /// The composition root maps this value to the matching factory. Values are
@@ -29,6 +56,16 @@ impl RepositoryType {
             _ => None,
         }
     }
+
+    /// Canonical lowercase label used in logs (`postgres`, `sqlite`,
+    /// `in_memory`), regardless of how `PERSISTENCE` was spelled.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InMemory => "in_memory",
+            Self::Postgres => "postgres",
+            Self::Sqlite => "sqlite",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +78,7 @@ pub struct Config {
     pub log_filter: String,
     pub rate_limit_max_requests: u32,
     pub rate_limit_window: Duration,
+    pub log_backend: LogBackend,
     pub log_dir: PathBuf,
 }
 
@@ -155,6 +193,14 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_DIR));
 
+        let log_backend = match non_empty(lookup("LOG_BACKEND")) {
+            Some(raw) => LogBackend::parse(&raw).ok_or(ConfigError::Invalid {
+                name: "LOG_BACKEND",
+                value: raw,
+            })?,
+            None => LogBackend::default(),
+        };
+
         Ok(Self {
             repository_type,
             database_url,
@@ -164,6 +210,7 @@ impl Config {
             log_filter,
             rate_limit_max_requests,
             rate_limit_window: Duration::from_secs(rate_limit_window_secs),
+            log_backend,
             log_dir,
         })
     }
@@ -208,6 +255,41 @@ mod tests {
         );
         assert_eq!(config.rate_limit_window, Duration::from_secs(60));
         assert_eq!(config.log_dir, PathBuf::from("log"));
+        assert_eq!(config.log_backend, LogBackend::File);
+    }
+
+    #[test]
+    fn parses_log_backend() {
+        // Absent → default; case-insensitive; unknown → invalid.
+        let config = config_with(postgres_config()).expect("valid config");
+        assert_eq!(config.log_backend, LogBackend::File);
+
+        for raw in ["file", "FILE", " File "] {
+            let config = config_with(&[
+                ("PERSISTENCE", "POSTGRES"),
+                ("DATABASE_URL", "postgres://localhost/lightning"),
+                ("LOG_BACKEND", raw),
+            ])
+            .expect("valid config");
+            assert_eq!(config.log_backend, LogBackend::File);
+        }
+
+        assert_eq!(
+            config_with(&[
+                ("PERSISTENCE", "POSTGRES"),
+                ("DATABASE_URL", "postgres://localhost/lightning"),
+                ("LOG_BACKEND", "datadog"),
+            ]),
+            Err(ConfigError::Invalid {
+                name: "LOG_BACKEND",
+                value: "datadog".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn log_backend_labels_are_canonical() {
+        assert_eq!(LogBackend::File.as_str(), "file");
     }
 
     #[test]
