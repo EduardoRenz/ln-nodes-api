@@ -26,9 +26,16 @@ services:
       PORT: 3000
       IMPORT_INTERVAL_SECS: "${IMPORT_INTERVAL_SECS:-300}"
       MEMPOOL_API_URL: "${MEMPOOL_API_URL:-https://mempool.space/api/v1/lightning/nodes/rankings/connectivity}"
+      LOG_DIR: /app/log
       RUST_LOG: "${RUST_LOG:-info}"
     ports:
       - "${APP_PORT:-3000}:3000"
+    # Run as the host user so the bind-mounted ./log is writable and the
+    # files stay owned by you. UID/GID are not reliably exportable (bash
+    # makes UID readonly), hence HOST_*; defaults cover the usual uid 1000.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ./log:/app/log
     depends_on:
       db:
         condition: service_healthy

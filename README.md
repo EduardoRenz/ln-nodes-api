@@ -74,6 +74,7 @@ changed. Rebuild after source, dependency, or migration changes.
 | `RUST_LOG` | `info` | `tracing` filter. |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | Requests per client allowed in one rate-limit window. Must be at least `1`. |
 | `RATE_LIMIT_WINDOW_SECS` | `60` | Rate-limit window length in seconds. Must be at least `1`. |
+| `LOG_DIR` | `log` | Directory for import-run log files, one append-only file per UTC day (`YYYY-MM-DD.log`). Compose bind-mounts the project's `log/` at `/app/log` and runs the app as your uid/gid (`HOST_UID`/`HOST_GID`, default `1000`) so the files stay owned by you. |
 | `APP_PORT` | `3000` | Compose-only host port for the app. |
 | `DB_PORT` | `5432` | Compose-only host port for PostgreSQL. |
 
@@ -93,6 +94,10 @@ Notes:
 - Rate limiting applies to `GET /nodes` only, keyed by client IP, using a fixed
   window. `GET /health` is deliberately unlimited so monitoring is never
   blocked. Over-limit requests return `429` with a `Retry-After` header.
+- Every import run (immediate, periodic, or failed) appends one line to
+  `LOG_DIR/<YYYY-MM-DD>.log`, for example
+  `2026-10-24T14:03:22Z imported count=357`. In Compose those files land in
+  the project's `log/` directory, owned by your user.
 - Inside Compose, `PORT` is fixed at `3000`; use `APP_PORT` to change the host
   port.
 - The Rust process does not load `.env` automatically. Export variables before

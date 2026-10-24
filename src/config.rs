@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub const DEFAULT_MEMPOOL_URL: &str =
@@ -6,6 +7,7 @@ pub const DEFAULT_IMPORT_INTERVAL_SECS: u64 = 300;
 pub const MIN_IMPORT_INTERVAL_SECS: u64 = 30;
 pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 10;
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
+pub const DEFAULT_LOG_DIR: &str = "log";
 
 /// Repository implementation selected by the `PERSISTENCE` variable.
 ///
@@ -39,6 +41,7 @@ pub struct Config {
     pub log_filter: String,
     pub rate_limit_max_requests: u32,
     pub rate_limit_window: Duration,
+    pub log_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -148,6 +151,10 @@ impl Config {
             return Err(ConfigError::ZeroRateLimitWindow);
         }
 
+        let log_dir = non_empty(lookup("LOG_DIR"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_LOG_DIR));
+
         Ok(Self {
             repository_type,
             database_url,
@@ -157,6 +164,7 @@ impl Config {
             log_filter,
             rate_limit_max_requests,
             rate_limit_window: Duration::from_secs(rate_limit_window_secs),
+            log_dir,
         })
     }
 }
@@ -199,6 +207,19 @@ mod tests {
             DEFAULT_RATE_LIMIT_MAX_REQUESTS
         );
         assert_eq!(config.rate_limit_window, Duration::from_secs(60));
+        assert_eq!(config.log_dir, PathBuf::from("log"));
+    }
+
+    #[test]
+    fn overrides_log_dir() {
+        let config = config_with(&[
+            ("PERSISTENCE", "POSTGRES"),
+            ("DATABASE_URL", "postgres://localhost/lightning"),
+            ("LOG_DIR", "var/import-logs"),
+        ])
+        .expect("valid config");
+
+        assert_eq!(config.log_dir, PathBuf::from("var/import-logs"));
     }
 
     #[test]

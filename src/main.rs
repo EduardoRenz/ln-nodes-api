@@ -86,6 +86,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         app.gateway.clone(),
         app.repository.clone(),
         app.import_interval,
+        config.log_dir.clone(),
         shutdown_rx,
     ));
 

@@ -121,6 +121,7 @@ mod unit_tests {
             log_filter: "info".to_string(),
             rate_limit_max_requests: 60,
             rate_limit_window: std::time::Duration::from_secs(60),
+            log_dir: std::path::PathBuf::from("log"),
         }
     }
 
@@ -154,6 +155,7 @@ mod integration_tests {
             log_filter: "info".to_string(),
             rate_limit_max_requests: 60,
             rate_limit_window: std::time::Duration::from_secs(60),
+            log_dir: std::path::PathBuf::from("log"),
         };
 
         let repository = ConfiguredNodesRepositoryFactory

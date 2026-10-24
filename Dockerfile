@@ -22,6 +22,10 @@ RUN apt-get update \
 
 RUN useradd --system --create-home --uid 10001 app
 
+# Import-run log directory. Compose bind-mounts the project's ./log here;
+# this fallback keeps bare `docker run` (as USER app) writable too.
+RUN mkdir -p /app/log && chown app:app /app/log
+
 COPY --from=builder /app/target/release/rust-lightning-service /usr/local/bin/rust-lightning-service
 
 USER app
