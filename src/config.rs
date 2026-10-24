@@ -4,7 +4,7 @@ pub const DEFAULT_MEMPOOL_URL: &str =
     "https://mempool.space/api/v1/lightning/nodes/rankings/connectivity";
 pub const DEFAULT_IMPORT_INTERVAL_SECS: u64 = 300;
 pub const MIN_IMPORT_INTERVAL_SECS: u64 = 30;
-pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 60;
+pub const DEFAULT_RATE_LIMIT_MAX_REQUESTS: u32 = 10;
 pub const DEFAULT_RATE_LIMIT_WINDOW_SECS: u64 = 60;
 
 /// Repository implementation selected by the `PERSISTENCE` variable.
