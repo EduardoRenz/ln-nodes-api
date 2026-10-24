@@ -8,6 +8,28 @@ DB_NAME ?= lightning
 
 .PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset build test test-unit test-integration test-live
 
+# Load `.env` for variables that are not already set.
+#
+# The Rust process never reads `.env` on its own; that is deliberate and
+# documented. Tests that follow the ambient configuration therefore need the
+# Makefile to supply it. Variables already present in the environment are left
+# alone, so `PERSISTENCE=sqlite make test-live` still wins over `.env`.
+#
+# `printenv` does the presence check rather than `${!key}`, because Make
+# recipes run under `/bin/sh`, which is dash on Debian and Ubuntu and has no
+# indirect expansion. `export "$$line"` keeps the value quoted as a whole, so
+# values containing spaces or `#` survive.
+define load_dotenv
+if [ -f .env ]; then \
+	while IFS= read -r line || [ -n "$$line" ]; do \
+		case "$$line" in ''|\#*) continue ;; esac; \
+		key="$${line%%=*}"; \
+		printenv "$$key" >/dev/null 2>&1 && continue; \
+		export "$$line"; \
+	done < .env; \
+fi
+endef
+
 help:
 	@echo "Usage:"
 	@echo "  make up          Start the app and database with the existing image"
@@ -23,7 +45,7 @@ help:
 	@echo "  make test        Run all tests (unit and integration)"
 	@echo "  make test-unit   Run unit tests only"
 	@echo "  make test-integration  Run gateway integration tests only"
-	@echo "  make test-live   Call the real mempool.space API"
+	@echo "  make test-live   Call the real mempool.space API and run the end-to-end HTTP test"
 
 up:
 	$(COMPOSE) up -d
@@ -72,5 +94,7 @@ test-integration:
 	@cargo test --lib integration_tests
 
 test-live:
-	@echo "### Live"
+	@echo "### Live (gateway against the real mempool.space API)"
 	@cargo test --lib live_tests -- --ignored
+	@echo "### E2E (real HTTP server, ambient configuration)"
+	@$(load_dotenv); cargo test --test e2e_live -- --ignored

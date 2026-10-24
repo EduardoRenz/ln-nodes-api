@@ -96,7 +96,9 @@ Notes:
 - Inside Compose, `PORT` is fixed at `3000`; use `APP_PORT` to change the host
   port.
 - The Rust process does not load `.env` automatically. Export variables before
-  running it outside Docker.
+  running it outside Docker. `make test-live` is the exception: it sources
+  `.env` itself, and only for variables you have not already exported, so
+  `PERSISTENCE=sqlite make test-live` still overrides the file.
 - The credentials in `.env.example` are development defaults.
 
 ## Local Development
@@ -191,20 +193,34 @@ The suite is split by test module:
 | `make test` | Unit and integration tests, grouped under `### Unit` and `### Integration` headings; the live test is skipped |
 | `make test-unit` | Domain, configuration, import policy, and parsing |
 | `make test-integration` | `MempoolNodesGateway` against a local `wiremock` server; `SqliteNodesRepository` against temp databases |
-| `make test-live` | One real `GET` against mempool.space |
+| `make test-live` | One real `GET` against mempool.space, plus the end-to-end HTTP test. Sources `.env` for any variable you have not already exported. |
+| `cargo test --test e2e_live -- --ignored` | End-to-end HTTP test alone |
 
 The integration tests exercise the real `reqwest` path and assert node parsing,
 invalid-record skipping, HTTP status mapping, invalid payloads, and connection
 failures. The SQLite integration tests assert snapshot replacement, rank
-ordering, persistence across reopen, and ping. The live test is marked
-`#[ignore]`; run it with `make test-live` when network access is available.
-HTTP and PostgreSQL integration tests are a next step.
+ordering, persistence across reopen, and ping.
+
+The route tests in `src/routes/` drive the `Router` in memory with
+`tower::ServiceExt::oneshot` and cover status codes, the `404` fallback, and
+rate-limit behaviour including `Retry-After` and the `/health` exemption.
+
+The end-to-end test in `tests/e2e_live.rs` boots the real `axum::serve` on an
+ephemeral port and calls it over HTTP. It follows the ambient configuration
+without overriding it, so it exercises whichever backend `PERSISTENCE`
+selects — in-memory, SQLite, and PostgreSQL all run the same assertions. It
+needs no network and performs no import, so the configured database is left
+untouched. Both the live and end-to-end tests are marked `#[ignore]`; run them
+with `make test-live`. The end-to-end test skips its rate-limit exhaustion
+assertions when the configured budget or window makes them impractical, and
+reports that it did so.
 
 ## Documentation
 
 - [`docs/api.md`](docs/api.md) — HTTP API contract and examples.
 - [`docs/prd/Architecture.md`](docs/prd/Architecture.md) — architecture and design decisions.
 - [`docs/prd/tech-spec/01-database.md`](docs/prd/tech-spec/01-database.md) — schema, migrations, persistence, and database operations.
+- [`docs/prd/tech-spec/02-api.md`](docs/prd/tech-spec/02-api.md) — HTTP routing, middleware, rate limiting, and error mapping.
 - [`docs/prd/Back-end Coding Challenge - Superhuman Docs.md`](docs/prd/Back-end%20Coding%20Challenge%20-%20Superhuman%20Docs.md) — challenge requirements.
 
 ## Challenge README Template
@@ -252,8 +268,10 @@ See [`docs/prd/Architecture.md`](docs/prd/Architecture.md) for the full reasonin
 
 The snapshot replacement strategy trusts the external endpoint to return a
 complete ranking. The non-empty check reduces the risk but does not prove
-completeness. HTTP and PostgreSQL integration tests would be the next
-investment; SQLite repository integration tests are already in place.
+completeness. The HTTP layer is covered by in-memory route tests and an
+end-to-end test that boots a real server, and the repository layer by SQLite
+integration tests; the PostgreSQL repository is exercised through the
+end-to-end test, which runs against whatever `PERSISTENCE` selects.
 
 ### Is there any other information you'd like us to know?
 

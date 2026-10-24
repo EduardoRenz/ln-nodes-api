@@ -233,6 +233,38 @@ Covered behaviours:
 
 The test that asserts `/health` survives an exhausted `/nodes` window is the one that protects the monitoring exemption described in §4.
 
+### End-to-end test — real server, real socket
+
+`tests/e2e_live.rs` closes a gap the route tests cannot. `oneshot` never touches a socket, so it bypasses `into_make_service_with_connect_info` — and that is precisely what populates the `ConnectInfo` the limiter keys on. The route tests inject the extension by hand, which means they cannot prove the production path works. Only booting the server can.
+
+The end-to-end test therefore:
+
+1. Reads `Config::from_env` with **no override** — whatever `PERSISTENCE` selects is what gets exercised.
+2. Builds the gateway and repository through their real factories, so migrations are applied.
+3. Boots `axum::serve` with `into_make_service_with_connect_info` on an ephemeral port.
+4. Calls the endpoints over HTTP with `reqwest`.
+
+No import is performed, so the gateway is constructed but never called and the test runs fully offline. `/nodes` returns `[]` on a fresh database or the existing snapshot otherwise; both are valid, so the test asserts `200` plus a well-formed JSON array rather than specific contents.
+
+The same assertions run identically against in-memory, SQLite, and PostgreSQL, because the test never branches on the backend.
+
+**Boot serialization.** Tests in the binary share the configured database, and booting runs migrations. Running them in parallel let two tests observe the same migration as pending and both execute it, failing with `table nodes already exists`. Production migrates once at startup, so the tests take a `tokio::sync::Mutex` around boot to mirror that. `boot()` returns the guard, so holding it is automatic rather than something each test can forget.
+
+**Configuration-aware assertions.** The exhaustion tests read `rate_limit_max_requests` and `rate_limit_window` from the ambient configuration. A budget of `N` allows exactly `N` successful requests, with the `N+1`-th rejected. When the configured budget exceeds 200 requests, or the window is shorter than 10 seconds, the exhaustion assertions are skipped with a message: a large budget makes the test slow, and a short window lets the counter reset mid-test. The behaviour itself remains covered by the deterministic unit tests in `middleware.rs`, which control time explicitly.
+
+Run it with `make test-live`, or directly:
+
+```bash
+cargo test --test e2e_live -- --ignored
+```
+
+The `make` target sources `.env` for any variable not already exported, because the Rust process does not read it on its own. Calling `cargo test` directly means the variables must already be in the environment:
+
+```bash
+set -a; . ./.env; set +a
+cargo test --test e2e_live -- --ignored
+```
+
 ---
 
 ## 8. Limitations and Trade-offs
