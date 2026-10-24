@@ -218,14 +218,18 @@ interface and never imports `sqlx` or a concrete repository type.
 ```text
 src/repositories/
 ├── mod.rs
-├── nodes_repository.rs          # NodesRepository + RepositoryError
+├── repository_error.rs          # RepositoryError (shared persistence vocabulary)
+├── nodes_repository.rs          # NodesRepository port
 ├── postgres_nodes_repository.rs # PostgresNodesRepository
-├── nodes_repository_factory.rs  # NodesRepositoryFactory + PostgresNodesRepositoryFactory
-└── mock_nodes_repository.rs     # MockNodesRepository (test builds only)
+├── sqlite_nodes_repository.rs   # SqliteNodesRepository
+├── nodes_repository_factory.rs  # NodesRepositoryFactory + backend factories + selection
+├── any_nodes_repository.rs      # AnyNodesRepository (runtime-selected wrapper)
+└── mock_nodes_repository.rs     # MockNodesRepository (IN_MEMORY backend and tests)
 
 src/infrastructure/
 ├── mod.rs
-└── postgres.rs     # Postgres manager: pool, connection retry, migrations
+├── postgres.rs     # Postgres manager: pool, connection retry, migrations
+└── sqlite.rs       # Sqlite manager: pool, pragmas, migrations
 ```
 
 Method surface:
@@ -519,6 +523,20 @@ values (`RepositoryError::Unavailable` holds the database cause as a string;
 application errors embed their sources in the display), so console lines,
 audit records, and exit output stay self-contained; internal details are
 never returned to clients.
+
+Error vocabulary belongs to the boundary, not to one entity:
+
+- Persistence ports share `RepositoryError`, defined once in
+  `repositories/repository_error.rs`. Its variants describe the persistence
+  boundary itself (unreachable database, unmappable rows), which is why the
+  type is not duplicated per port.
+- A port with richer semantics (`NotFound`, `Conflict`, …) defines its own
+  error enum instead of widening the shared one. Variants are added to
+  `RepositoryError` only when every persistence port can exhibit them.
+- The gateway keeps a separate `GatewayError`, because transport failures have
+  different causes than storage failures.
+- Ports re-export their error type, so callers import vocabulary from the port
+  they already depend on.
 
 Concurrency:
 

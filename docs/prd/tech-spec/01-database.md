@@ -315,9 +315,14 @@ docker compose down -v
 
 - `../../../README.md` — setup and run instructions.
 - `../Architecture.md` — layer boundaries and persistence decisions.
-- `../../../migrations/0001_create_nodes.sql` — schema source of truth.
+- `../../../migrations/0001_create_nodes.sql` — PostgreSQL schema source of truth.
+- `../../../migrations-sqlite/0001_create_nodes.sql` — SQLite schema source of truth.
+- `src/repositories/repository_error.rs` — shared persistence error vocabulary.
 - `src/repositories/nodes_repository.rs` — `NodesRepository` interface.
 - `src/repositories/postgres_nodes_repository.rs` — `PostgresNodesRepository` implementation.
-- `src/repositories/nodes_repository_factory.rs` — factory that creates the PostgreSQL repository.
-- `src/repositories/mock_nodes_repository.rs` — in-memory test double.
+- `src/repositories/sqlite_nodes_repository.rs` — `SqliteNodesRepository` implementation.
+- `src/repositories/nodes_repository_factory.rs` — backend factories and the `PERSISTENCE` selection.
+- `src/repositories/any_nodes_repository.rs` — runtime-selected repository wrapper.
+- `src/repositories/mock_nodes_repository.rs` — in-memory implementation (`IN_MEMORY` backend and test double).
 - `src/infrastructure/postgres.rs` — process-scoped PostgreSQL manager: pool, connection retry, and migrations.
+- `src/infrastructure/sqlite.rs` — process-scoped SQLite manager: pool, pragmas, and migrations.
