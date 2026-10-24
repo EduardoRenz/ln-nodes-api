@@ -29,6 +29,12 @@ pub fn record(
     writeln!(file, "{}", format_run(timestamp, result))
 }
 
+/// [`record`] with the current UTC time — the entry point shared by the
+/// scheduler and the one-shot `import` command.
+pub fn record_now(dir: &Path, result: &Result<ImportOutcome, ImportError>) -> io::Result<()> {
+    record(dir, Utc::now(), result)
+}
+
 /// Renders one run as a single line: `<RFC 3339 UTC> <outcome>`.
 fn format_run(timestamp: DateTime<Utc>, result: &Result<ImportOutcome, ImportError>) -> String {
     let stamp = timestamp.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -127,6 +133,20 @@ mod tests {
         assert_eq!(
             read(dir.path(), "2026-10-14"),
             "2026-10-14T17:46:40Z error failed to fetch nodes\n"
+        );
+    }
+
+    #[test]
+    fn record_now_uses_the_current_utc_date() {
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        record_now(dir.path(), &Ok(ImportOutcome::Imported { count: 1 })).expect("record_now");
+
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+        let contents = read(dir.path(), &today);
+        assert!(
+            contents.starts_with(&format!("{today}T")) && contents.ends_with(" imported count=1\n"),
+            "unexpected contents: {contents}"
         );
     }
 }

@@ -47,6 +47,7 @@ make up-build
 make up
 make ps
 make db-migrate
+make import
 make bash
 make db-shell
 make down
@@ -161,6 +162,23 @@ cargo run -- migrate
 
 The command is idempotent and forward-only; it does not run down migrations.
 After adding a migration, rebuild the image with `make build` or `make up-build`.
+
+## One-shot Import
+
+To run the mempool import exactly once — no HTTP server, no scheduler loop —
+use the `import` command:
+
+```bash
+docker compose run --rm app import   # inside Docker
+cargo run -- import                  # locally
+make import                          # shortcut for the Compose form
+```
+
+It connects to the configured repository (running pending migrations
+automatically), fetches the ranking once, replaces the snapshot, appends the
+run to the `LOG_DIR` daily file just like the scheduler does, and exits.
+Exit code is `0` for a successful or skipped import and non-zero when the
+fetch or the database write fails.
 
 ## API
 

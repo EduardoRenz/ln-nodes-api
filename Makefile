@@ -6,7 +6,7 @@ DB_NAME ?= lightning
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset build test test-unit test-integration test-live
+.PHONY: help up up-build down ps logs bash db-shell db-migrate db-reset import build test test-unit test-integration test-live
 
 # Load `.env` for variables that are not already set.
 #
@@ -41,6 +41,7 @@ help:
 	@echo "  make db-shell    Open psql in the database container"
 	@echo "  make db-migrate  Apply pending database migrations"
 	@echo "  make db-reset    Stop the stack and delete the database volume"
+	@echo "  make import      Fetch the ranking once, persist it, and exit"
 	@echo "  make build       Build the app image"
 	@echo "  make test        Run all tests (unit and integration)"
 	@echo "  make test-unit   Run unit tests only"
@@ -75,19 +76,22 @@ db-reset:
 	@echo "This deletes the PostgreSQL volume."
 	$(COMPOSE) down -v
 
+import:
+	$(COMPOSE) run --rm $(APP) import
+
 build:
 	$(COMPOSE) build
 
 test:
 	@echo "### Unit"
-	@cargo test --lib -- --skip integration_tests --skip live_tests
+	@cargo test --lib --bins -- --skip integration_tests --skip live_tests
 	@echo "### Integration"
 	@cargo test --lib integration_tests
 	@echo "### Live (skipped, run: make test-live)"
 
 test-unit:
 	@echo "### Unit"
-	@cargo test --lib -- --skip integration_tests --skip live_tests
+	@cargo test --lib --bins -- --skip integration_tests --skip live_tests
 
 test-integration:
 	@echo "### Integration"

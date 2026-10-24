@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
+use rust_lightning_service::application::import_nodes::{ImportOutcome, import_nodes};
 use rust_lightning_service::composition::{build_app, run_migrations};
 use rust_lightning_service::config::Config;
 use rust_lightning_service::gateways::nodes_gateway_factory::{
@@ -12,12 +13,13 @@ use rust_lightning_service::gateways::nodes_gateway_factory::{
 use rust_lightning_service::repositories::nodes_repository_factory::{
     ConfiguredNodesRepositoryFactory, NodesRepositoryFactory,
 };
-use rust_lightning_service::{scheduler, telemetry};
+use rust_lightning_service::{import_log, scheduler, telemetry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
     Serve,
     Migrate,
+    Import,
     Help,
 }
 
@@ -28,6 +30,7 @@ fn parse_command(mut args: impl Iterator<Item = String>) -> Result<Command, Stri
     match (command.as_deref(), extra) {
         (None, None) => Ok(Command::Serve),
         (Some("migrate"), None) => Ok(Command::Migrate),
+        (Some("import"), None) => Ok(Command::Import),
         (Some("-h" | "--help" | "help"), None) => Ok(Command::Help),
         (Some(other), None) => Err(format!("unknown command: {other}")),
         _ => Err("too many arguments".to_string()),
@@ -38,6 +41,7 @@ fn print_usage() {
     println!("Usage: rust-lightning-service [COMMAND]");
     println!();
     println!("Commands:");
+    println!("  import   Fetch nodes from the ranking API once, persist the snapshot, and exit");
     println!("  migrate  Apply pending database migrations and exit");
     println!("  help     Show this help");
     println!();
@@ -68,6 +72,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
         run_migrations(&config).await?;
         tracing::info!("database migrations applied");
         return Ok(());
+    }
+
+    if command == Command::Import {
+        // The repository factory runs pending migrations, so a bare import
+        // against a fresh database works without a separate migrate step.
+        let gateway = MempoolNodesGatewayFactory.create(&config)?;
+        let repository = ConfiguredNodesRepositoryFactory.create(&config).await?;
+        let outcome = import_nodes(&gateway, &repository).await;
+
+        // Same date-partitioned record the scheduler writes; a one-shot run
+        // must show up in the daily log too.
+        if let Err(error) = import_log::record_now(&config.log_dir, &outcome) {
+            tracing::warn!(%error, dir = %config.log_dir.display(), "failed to record import run");
+        }
+
+        match outcome {
+            Ok(ImportOutcome::Imported { count }) => {
+                tracing::info!(count, "imported node snapshot");
+                return Ok(());
+            }
+            Ok(ImportOutcome::SkippedEmpty) => {
+                tracing::warn!("mempool returned no valid nodes; keeping previous snapshot");
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
 
     tracing::info!(
@@ -135,5 +165,49 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Command, String> {
+        parse_command(args.iter().map(|arg| (*arg).to_string()))
+    }
+
+    #[test]
+    fn no_arguments_starts_the_server() {
+        assert_eq!(parse(&[]), Ok(Command::Serve));
+    }
+
+    #[test]
+    fn parses_migrate_and_import() {
+        assert_eq!(parse(&["migrate"]), Ok(Command::Migrate));
+        assert_eq!(parse(&["import"]), Ok(Command::Import));
+    }
+
+    #[test]
+    fn parses_help_aliases() {
+        assert_eq!(parse(&["help"]), Ok(Command::Help));
+        assert_eq!(parse(&["-h"]), Ok(Command::Help));
+        assert_eq!(parse(&["--help"]), Ok(Command::Help));
+    }
+
+    #[test]
+    fn rejects_unknown_command() {
+        assert_eq!(parse(&["serve"]), Err("unknown command: serve".to_string()));
+    }
+
+    #[test]
+    fn rejects_extra_arguments() {
+        assert_eq!(
+            parse(&["import", "extra"]),
+            Err("too many arguments".to_string())
+        );
+        assert_eq!(
+            parse(&["migrate", "extra"]),
+            Err("too many arguments".to_string())
+        );
     }
 }
