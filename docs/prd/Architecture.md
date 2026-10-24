@@ -669,7 +669,7 @@ commands are in `../../README.md`.
 - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
 - `src/application/` — import and list use cases.
-- `src/http/` — inbound HTTP layer.
+- `src/routes/` — inbound HTTP layer.
 - `src/gateways/` — external API gateway interface and implementations.
 - `src/repositories/` — repository interface and implementations.
 - `src/infrastructure/` — process-scoped PostgreSQL manager.
