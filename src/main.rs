@@ -10,10 +10,14 @@ use rust_lightning_service::config::Config;
 use rust_lightning_service::gateways::nodes_gateway_factory::{
     MempoolNodesGatewayFactory, NodesGatewayFactory,
 };
+use rust_lightning_service::logging::run_logger::RunLogger;
+use rust_lightning_service::logging::run_logger_factory::{
+    ConfiguredRunLoggerFactory, RunLoggerFactory,
+};
 use rust_lightning_service::repositories::nodes_repository_factory::{
     ConfiguredNodesRepositoryFactory, NodesRepositoryFactory,
 };
-use rust_lightning_service::{import_log, scheduler, telemetry};
+use rust_lightning_service::{scheduler, telemetry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
@@ -66,6 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let config = Config::from_env()?;
     telemetry::init(&config.log_filter);
+    let logger = ConfiguredRunLoggerFactory.create(&config);
 
     if command == Command::Migrate {
         tracing::info!("applying database migrations");
@@ -75,29 +80,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if command == Command::Import {
-        // The repository factory runs pending migrations, so a bare import
-        // against a fresh database works without a separate migrate step.
-        let gateway = MempoolNodesGatewayFactory.create(&config)?;
-        let repository = ConfiguredNodesRepositoryFactory.create(&config).await?;
-        let outcome = import_nodes(&gateway, &repository).await;
-
-        // Same date-partitioned record the scheduler writes; a one-shot run
-        // must show up in the daily log too.
-        if let Err(error) = import_log::record_now(&config.log_dir, &outcome) {
-            tracing::warn!(%error, dir = %config.log_dir.display(), "failed to record import run");
-        }
-
-        match outcome {
-            Ok(ImportOutcome::Imported { count }) => {
-                tracing::info!(count, "imported node snapshot");
-                return Ok(());
-            }
-            Ok(ImportOutcome::SkippedEmpty) => {
-                tracing::warn!("mempool returned no valid nodes; keeping previous snapshot");
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
-        }
+        return run_import(&config, &logger).await;
     }
 
     tracing::info!(
@@ -116,7 +99,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         app.gateway.clone(),
         app.repository.clone(),
         app.import_interval,
-        config.log_dir.clone(),
+        logger,
         shutdown_rx,
     ));
 
@@ -138,6 +121,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = importer.await;
 
     Ok(())
+}
+
+/// One-shot import: fetch once, persist, record the run, and report.
+///
+/// The repository factory runs pending migrations, so a bare import against
+/// a fresh database works without a separate migrate step. Exit semantics:
+/// a successful or skipped import is `Ok`; a fetch or database failure
+/// propagates so the process exits non-zero.
+async fn run_import(config: &Config, logger: &impl RunLogger) -> Result<(), Box<dyn Error>> {
+    let gateway = MempoolNodesGatewayFactory.create(config)?;
+    let repository = ConfiguredNodesRepositoryFactory.create(config).await?;
+    let outcome = import_nodes(&gateway, &repository).await;
+
+    logger.record_or_warn(&outcome).await;
+
+    match outcome {
+        Ok(ImportOutcome::Imported { count, new }) => {
+            tracing::info!(count, new, "imported node snapshot");
+            Ok(())
+        }
+        Ok(ImportOutcome::SkippedEmpty) => {
+            tracing::warn!("mempool returned no valid nodes; keeping previous snapshot");
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn shutdown_signal() {
