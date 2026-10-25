@@ -77,7 +77,17 @@ impl RateLimiter {
     /// exceeds `max_requests` in the current window it returns the time to
     /// wait until the window resets.
     fn check(&self, client: IpAddr, now: Instant) -> Result<(), Duration> {
-        let mut windows = self.windows.lock().expect("rate limiter mutex poisoned");
+        let mut windows = match self.windows.lock() {
+            Ok(windows) => windows,
+            Err(poisoned) => {
+                // A panic while the lock was held poisons the mutex. The map is
+                // just counters, so recovering is safe; clear the flag so only
+                // the first request after the panic pays for the warning.
+                tracing::warn!("rate limiter mutex was poisoned; recovering");
+                self.windows.clear_poison();
+                poisoned.into_inner()
+            }
+        };
 
         if windows.len() >= PRUNE_THRESHOLD {
             windows.retain(|_, window| window.reset_at > now);
@@ -229,5 +239,30 @@ mod tests {
         limiter.check(ip(250), later).expect("within quota");
 
         assert!(limiter.windows.lock().expect("lock").len() < PRUNE_THRESHOLD);
+    }
+
+    #[test]
+    fn recovers_from_a_poisoned_mutex() {
+        let limiter = RateLimiter::new(1, Duration::from_secs(60));
+        let now = Instant::now();
+
+        let windows = Arc::clone(&limiter.windows);
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = windows.lock().expect("lock");
+            panic!("intentional panic while holding the rate limiter lock");
+        }));
+
+        assert!(poisoned.is_err());
+        assert!(limiter.windows.is_poisoned());
+
+        // The limiter must keep serving after the panic instead of panicking
+        // again on the poisoned lock.
+        limiter
+            .check(ip(1), now)
+            .expect("recover from poisoned lock");
+        assert!(!limiter.windows.is_poisoned());
+
+        // The recovered map is still usable and keeps counting.
+        assert!(limiter.check(ip(1), now).is_err());
     }
 }
