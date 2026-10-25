@@ -1,5 +1,7 @@
 # Rust Lightning Nodes Service
 
+[![CI](https://github.com/EduardoRenz/ln-nodes-api/actions/workflows/ci.yml/badge.svg)](https://github.com/EduardoRenz/ln-nodes-api/actions/workflows/ci.yml)
+
 A small Rust service that imports Lightning Network node data from
 [mempool.space](https://mempool.space), stores it in the selected repository
 (PostgreSQL, SQLite, or in memory), and exposes it through a JSON API.
@@ -210,7 +212,11 @@ cargo clippy --all-targets -- -D warnings
 | `cargo test --test e2e_live -- --ignored` | End-to-end HTTP test alone |
 
 The live and end-to-end tests are marked `#[ignore]`, so the default suite
-stays offline and deterministic. Strategy in depth:
+stays offline and deterministic. CI runs the same checks on every push to
+`master` and on every pull request
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): `cargo fmt --check`,
+then `cargo clippy --all-targets --all-features --locked -- -D warnings`, then
+`cargo test --all-targets --all-features --locked`. Strategy in depth:
 [`docs/prd/tech-spec/02-api.md`](docs/prd/tech-spec/02-api.md) (HTTP layer and
 end-to-end boot) and
 [`docs/prd/tech-spec/03-logging.md`](docs/prd/tech-spec/03-logging.md) (logging
