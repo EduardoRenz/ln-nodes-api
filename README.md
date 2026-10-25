@@ -258,7 +258,10 @@ decisions are testable without a database or network.
 
 ### How long did you spend on this project?
 
-_To be filled in by the author._
+Approximately **32 hours across five days** (October 21–25, 2026). This is an
+upper-bound estimate: it sums each day's first-to-last commit span, so short
+breaks within a day are included. The first commit was on 2026-10-21 at 18:42
+and the last on 2026-10-25 at 02:04 (UTC-3).
 
 ### Did you make any trade-offs for this project? What would you have done differently with more time?
 
