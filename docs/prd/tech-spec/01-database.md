@@ -71,9 +71,7 @@ CREATE TABLE nodes (
     capacity_sats  BIGINT NOT NULL CHECK (capacity_sats >= 0),
     first_seen     TIMESTAMPTZ NOT NULL,
     rank_position  INTEGER NOT NULL,
-    imported_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+    imported_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX nodes_rank_position_idx
@@ -95,10 +93,6 @@ The full schema is created by the migrations in
 | `first_seen` | `TIMESTAMPTZ` | First observation time, converted from Unix seconds. |
 | `rank_position` | `INTEGER` | Position in the source connectivity ranking. |
 | `imported_at` | `TIMESTAMPTZ` | Time of the snapshot insert. Operational metadata. |
-| `created_at` | `TIMESTAMPTZ` | Row creation time. Defaults to `now()`. |
-| `updated_at` | `TIMESTAMPTZ` | Last update time. Defaults to `now()`; maintained by the trigger. |
-
-The `nodes_updated_at_trigger` updates `updated_at` before each `UPDATE`. Snapshot imports use inserts, so the trigger mainly supports future update paths.
 
 Why these types:
 
@@ -126,7 +120,6 @@ Migrations live in [`migrations/`](../../../migrations/) and are embedded into t
 The current migration set is:
 
 - `0001_create_nodes.sql` — creates the `nodes` table and index.
-- `0002_add_node_timestamps.sql` — adds `created_at`, `updated_at`, and the update trigger.
 
 At startup, the application:
 
