@@ -212,8 +212,8 @@ cargo clippy --all-targets -- -D warnings
 | `cargo test --test e2e_live -- --ignored` | End-to-end HTTP test alone |
 
 The live and end-to-end tests are marked `#[ignore]`, so the default suite
-stays offline and deterministic. CI runs the same checks on every push to
-`master` and on every pull request
+stays offline and deterministic. CI runs the same checks on every push and
+every pull request
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): `cargo fmt --check`,
 then `cargo clippy --all-targets --all-features --locked -- -D warnings`, then
 `cargo test --all-targets --all-features --locked`. Strategy in depth:
