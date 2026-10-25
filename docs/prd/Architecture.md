@@ -113,7 +113,7 @@ main.rs / composition.rs
         └── logging      (import-run audit)
                      │ implement ports
                      ▼
-application (use cases + ports)
+application (use cases + ports + presenter)
         │ depends on
         ▼
 domain (pure types, invariants, formatting)
@@ -137,7 +137,7 @@ requests. The audit sink is written from the import side only.
 | Layer | Responsibility | May depend on |
 | --- | --- | --- |
 | `domain` | Value objects, invariants, formatting, domain errors | `std`, `chrono`, `thiserror` |
-| `application` | Ports, use cases, application errors | `domain`, `gateways::nodes_gateway`, `repositories::nodes_repository` |
+| `application` | Ports, use cases, API presentation view, application errors | `domain`, `gateways::nodes_gateway`, `repositories::nodes_repository` |
 | `gateways` | External API interface, mempool implementation, test double | `domain`, `reqwest` (implementation only) |
 | `repositories` | Persistence interface, PostgreSQL implementation, test double | `domain`, `sqlx` (implementation only) |
 | `routes` | Inbound HTTP routes, handlers, DTOs, and middleware | `domain`, `application`, `repositories::nodes_repository`, `axum`, `serde` |
@@ -726,7 +726,8 @@ commands are in `../../README.md`.
 - `tech-spec/03-logging.md` — logging mechanisms, the `RunLogger` port, and backends.
 - `Back-end Coding Challenge - Superhuman Docs.md` — challenge requirements.
 - `src/domain/` — pure domain types and formatting.
-- `src/application/` — import and list use cases.
+- `src/domain/money.rs` — `Sats` value object with exact BTC rendering and checked arithmetic.
+- `src/application/` — import and list use cases, plus the API presenter.
 - `src/routes/` — inbound HTTP layer.
 - `src/gateways/` — external API gateway interface and implementations.
 - `src/repositories/` — repository interface and implementations.

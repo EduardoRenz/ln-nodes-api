@@ -1,6 +1,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 
 use crate::domain::error::DomainError;
+use crate::domain::money::Sats;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublicKey(String);
@@ -16,29 +17,6 @@ impl PublicKey {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Sats(u64);
-
-impl Sats {
-    pub const SATS_PER_BTC: u64 = 100_000_000;
-
-    pub fn new(value: u64) -> Self {
-        Self(value)
-    }
-
-    pub fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub fn as_btc(self) -> String {
-        format!(
-            "{}.{:08}",
-            self.0 / Self::SATS_PER_BTC,
-            self.0 % Self::SATS_PER_BTC
-        )
     }
 }
 
@@ -73,13 +51,6 @@ pub struct Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn formats_capacity_as_bitcoin_with_eight_decimals() {
-        assert_eq!(Sats::new(36_010_516_297).as_btc(), "360.10516297");
-        assert_eq!(Sats::new(550_000).as_btc(), "0.00550000");
-        assert_eq!(Sats::new(0).as_btc(), "0.00000000");
-    }
 
     #[test]
     fn formats_first_seen_as_utc_rfc3339() {

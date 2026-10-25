@@ -6,7 +6,7 @@ use axum::{Json, Router};
 use serde::Serialize;
 
 use crate::application::list_nodes::list_nodes;
-use crate::domain::Node;
+use crate::application::present_nodes::{NodePresenter, NodeView};
 use crate::repositories::nodes_repository::NodesRepository;
 use crate::routes::errors::ApiError;
 use crate::routes::middleware::{RateLimiter, rate_limit};
@@ -19,13 +19,13 @@ pub struct NodeResponse {
     first_seen: String,
 }
 
-impl From<&Node> for NodeResponse {
-    fn from(node: &Node) -> Self {
+impl From<NodeView> for NodeResponse {
+    fn from(view: NodeView) -> Self {
         Self {
-            public_key: node.public_key.as_str().to_owned(),
-            alias: node.alias.clone(),
-            capacity: node.capacity.as_btc(),
-            first_seen: node.first_seen.to_rfc3339(),
+            public_key: view.public_key,
+            alias: view.alias,
+            capacity: view.capacity,
+            first_seen: view.first_seen,
         }
     }
 }
@@ -52,5 +52,7 @@ where
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(nodes.iter().map(NodeResponse::from).collect()))
+    let views = NodePresenter.present_all(&nodes);
+
+    Ok(Json(views.into_iter().map(NodeResponse::from).collect()))
 }

@@ -38,6 +38,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+    use crate::domain::{FirstSeen, Node, PublicKey, Sats};
     use crate::repositories::mock_nodes_repository::MockNodesRepository;
 
     /// Build a request with a client address attached, the same way
@@ -158,5 +159,42 @@ mod tests {
             .await
             .expect("other client");
         assert_eq!(other.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn nodes_endpoint_serializes_the_presented_contract() {
+        let node = Node {
+            public_key: PublicKey::parse("03abc").expect("public key"),
+            alias: "ACINQ".to_string(),
+            capacity: Sats::new(36_010_516_297),
+            first_seen: FirstSeen::from_unix(1_522_941_222).expect("timestamp"),
+            rank_position: 0,
+        };
+        let repository = Arc::new(MockNodesRepository::with_nodes(vec![node]));
+        let app = router(
+            repository,
+            RateLimiter::new(10, std::time::Duration::from_secs(60)),
+        );
+
+        let response = app
+            .oneshot(request_from("/nodes", Ipv4Addr::new(127, 0, 0, 1)))
+            .await
+            .expect("nodes");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), 10_000)
+            .await
+            .expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+
+        assert_eq!(
+            json,
+            serde_json::json!([{
+                "public_key": "03abc",
+                "alias": "ACINQ",
+                "capacity": "360.10516297",
+                "first_seen": "2018-04-05T15:13:42Z"
+            }])
+        );
     }
 }
